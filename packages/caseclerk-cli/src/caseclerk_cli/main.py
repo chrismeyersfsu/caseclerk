@@ -29,6 +29,25 @@ app = typer.Typer(help="CaseClerk: a case-files MCP server for a small law firm.
 app.add_typer(config_commands.app, name="config")
 
 
+def _print_version(show: bool) -> None:
+    if show:
+        typer.echo(core_update.current_version())
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version,
+        is_eager=True,
+        help="Print the installed version and exit.",
+    ),
+) -> None:
+    """CaseClerk: a case-files MCP server for a small law firm."""
+
+
 def _make_case_dir_resolver(conn: sqlite3.Connection, clio_root: Path) -> Callable[[int], Path]:
     def _resolve(case_id: int) -> Path:
         case = db.get_case(conn, case_id)

@@ -119,6 +119,9 @@ def test_check_for_update_ignores_non_semver_tag(conn: sqlite3.Connection) -> No
 
 
 def test_apply_update_spawns_uv_tool_install_via_injected_spawn() -> None:
+    # `uv tool install` has no `--from`: the source must be the single PACKAGE argument,
+    # here a PEP 508 direct reference with a #subdirectory= fragment (the repo's root has
+    # no [project] -- caseclerk-cli lives under packages/caseclerk-cli).
     captured: dict[str, list[str]] = {}
 
     def fake_spawn(args: list[str]) -> object:
@@ -132,7 +135,6 @@ def test_apply_update_spawns_uv_tool_install_via_injected_spawn() -> None:
         "tool",
         "install",
         "--force",
-        "--from",
-        "git+https://github.com/chrismeyersfsu/caseclerk@v1.2.3",
-        "caseclerk-cli",
+        "caseclerk-cli @ git+https://github.com/chrismeyersfsu/caseclerk@v1.2.3"
+        "#subdirectory=packages/caseclerk-cli",
     ]

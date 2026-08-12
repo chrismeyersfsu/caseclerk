@@ -152,8 +152,15 @@ def _default_spawn(args: list[str]) -> object:
 
 
 def apply_update(version_tag: str, *, spawn: SpawnFn = _default_spawn) -> object:
-    """Spawn a detached `uv tool install` for version_tag; takes effect on the host's next restart."""
-    source = f"git+https://github.com/{REPO}@{version_tag}"
-    args = ["uv", "tool", "install", "--force", "--from", source, DISTRIBUTION_NAME]
+    """Spawn a detached `uv tool install` for version_tag; takes effect on the host's next restart.
+
+    `uv tool install` has no `--from`: the source has to be the single PACKAGE argument
+    itself. For a git repo that's a workspace (no root [project], the installable package
+    lives in a subdirectory) that means a PEP 508 direct reference with a `#subdirectory=`
+    fragment -- plain `--from git+<repo>@<tag> <name>` (an older/other tool's syntax) does
+    not exist in this uv and silently isn't accepted as an install source.
+    """
+    requirement = f"{DISTRIBUTION_NAME} @ git+https://github.com/{REPO}@{version_tag}#subdirectory=packages/{DISTRIBUTION_NAME}"
+    args = ["uv", "tool", "install", "--force", requirement]
     logger.info("spawning self-update: %s", " ".join(args))
     return spawn(args)
