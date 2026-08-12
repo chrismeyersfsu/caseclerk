@@ -30,8 +30,10 @@ RELEASES_LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 DISTRIBUTION_NAME = "caseclerk-cli"
 REQUEST_TIMEOUT_SECONDS = 5.0
 
-_META_LAST_CHECK = "updates.last_check_at"
-_META_AVAILABLE_VERSION = "updates.available_version"
+# meta-table keys; public so callers (e.g. the MCP server's processing_status tool)
+# can read the cached result without triggering a network check of their own.
+META_LAST_CHECK = "updates.last_check_at"
+META_AVAILABLE_VERSION = "updates.available_version"
 
 _SEMVER_RE = re.compile(r"^v?(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<pre>[0-9A-Za-z.-]+))?$")
 
@@ -112,15 +114,15 @@ def check_for_update(
     at = now_fn()
     current_version_str = current or current_version()
 
-    last_check_raw = db.get_meta(conn, _META_LAST_CHECK)
+    last_check_raw = db.get_meta(conn, META_LAST_CHECK)
     if last_check_raw is not None:
         last_check = datetime.fromisoformat(last_check_raw)
         if at - last_check < timedelta(hours=check_interval_hours):
-            cached = db.get_meta(conn, _META_AVAILABLE_VERSION)
+            cached = db.get_meta(conn, META_AVAILABLE_VERSION)
             return cached or None
 
     tag = fetch_latest_release_tag(client=client)
-    db.set_meta(conn, _META_LAST_CHECK, at.isoformat())
+    db.set_meta(conn, META_LAST_CHECK, at.isoformat())
 
     if tag is None:
         return None
@@ -130,7 +132,7 @@ def check_for_update(
         logger.warning("latest release tag is not valid semver, ignoring: %s", tag)
         return None
 
-    db.set_meta(conn, _META_AVAILABLE_VERSION, tag if newer else "")
+    db.set_meta(conn, META_AVAILABLE_VERSION, tag if newer else "")
     return tag if newer else None
 
 

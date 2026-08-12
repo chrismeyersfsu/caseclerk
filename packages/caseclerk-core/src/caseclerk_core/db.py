@@ -17,7 +17,9 @@ from pathlib import Path
 
 from caseclerk_core.config import data_dir
 from caseclerk_core.models import (
+    Case,
     CaseSummary,
+    Chunk,
     Document,
     DocumentState,
     Job,
@@ -267,6 +269,15 @@ def resolve_case_id(conn: sqlite3.Connection, client_name: str, case_number: str
     return int(row["id"]) if row else None
 
 
+def get_case(conn: sqlite3.Connection, case_id: int) -> Case | None:
+    row = conn.execute("SELECT * FROM cases WHERE id = ?", (case_id,)).fetchone()
+    if row is None:
+        return None
+    return Case(
+        id=row["id"], client_id=row["client_id"], case_number=row["case_number"], rel_path=row["rel_path"]
+    )
+
+
 # --- documents ---------------------------------------------------------
 
 
@@ -397,6 +408,20 @@ def replace_chunks(
     conn.commit()
 
 
+def list_chunks(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
+    rows = conn.execute("SELECT * FROM chunks WHERE document_id = ? ORDER BY seq", (document_id,)).fetchall()
+    return [
+        Chunk(
+            id=row["id"],
+            document_id=row["document_id"],
+            seq=row["seq"],
+            text=row["text"],
+            token_estimate=row["token_estimate"],
+        )
+        for row in rows
+    ]
+
+
 def replace_document_dates(conn: sqlite3.Connection, document_id: int, iso_dates: Iterable[str]) -> None:
     conn.execute("DELETE FROM document_dates WHERE document_id = ?", (document_id,))
     conn.executemany(
@@ -411,6 +436,12 @@ def get_document_dates(conn: sqlite3.Connection, document_id: int) -> list[str]:
         "SELECT iso_date FROM document_dates WHERE document_id = ? ORDER BY iso_date", (document_id,)
     ).fetchall()
     return [str(row["iso_date"]) for row in rows]
+
+
+def get_summary(conn: sqlite3.Connection, document_id: int) -> str | None:
+    """The document's stored summary, if summarization (a later phase) has produced one."""
+    row = conn.execute("SELECT text FROM summaries WHERE document_id = ?", (document_id,)).fetchone()
+    return str(row["text"]) if row else None
 
 
 def _fts_match_query(queries: Sequence[str]) -> str:

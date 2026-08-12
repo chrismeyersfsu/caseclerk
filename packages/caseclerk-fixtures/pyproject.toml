@@ -1,0 +1,20 @@
+[project]
+name = "caseclerk-fixtures"
+version = "0.1.0"
+description = "Dev-only synthetic Clio Drive generator, used by tests, e2e, and demos."
+requires-python = ">=3.11"
+authors = [{ name = "chrismeyersfsu" }]
+dependencies = [
+    "python-docx>=1.1",
+    "fpdf2>=2.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caseclerk_fixtures"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

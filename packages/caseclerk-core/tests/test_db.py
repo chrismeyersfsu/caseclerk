@@ -71,6 +71,37 @@ def test_resolve_case_id_requires_matching_client(conn: sqlite3.Connection) -> N
     assert db.resolve_case_id(conn, "Alvarez, Maria", "no-such-case") is None
 
 
+def test_get_case_returns_rel_path(conn: sqlite3.Connection) -> None:
+    case_id, _ = _seed_case(conn, "Alvarez, Maria", "2026-0142", "text")
+    case = db.get_case(conn, case_id)
+    assert case is not None
+    assert case.case_number == "2026-0142"
+    assert case.rel_path == "Alvarez, Maria/2026-0142"
+
+
+def test_get_case_missing_returns_none(conn: sqlite3.Connection) -> None:
+    assert db.get_case(conn, 999) is None
+
+
+def test_list_chunks_ordered_by_seq(conn: sqlite3.Connection) -> None:
+    _case_id, doc_id = _seed_case(conn, "Alvarez, Maria", "2026-0142", "first chunk")
+    db.replace_chunks(conn, doc_id, [(1, "second", 5), (0, "first chunk", 10)])
+    chunks = db.list_chunks(conn, doc_id)
+    assert [c.seq for c in chunks] == [0, 1]
+    assert chunks[0].text == "first chunk"
+
+
+def test_get_summary_is_none_until_one_is_written(conn: sqlite3.Connection) -> None:
+    _case_id, doc_id = _seed_case(conn, "Alvarez, Maria", "2026-0142", "text")
+    assert db.get_summary(conn, doc_id) is None
+    conn.execute(
+        "INSERT INTO summaries(document_id, model, text, created_at) VALUES (?, ?, ?, ?)",
+        (doc_id, "test-model", "A short summary.", "2026-08-12T00:00:00+00:00"),
+    )
+    conn.commit()
+    assert db.get_summary(conn, doc_id) == "A short summary."
+
+
 def test_upsert_document_and_status_counts(conn: sqlite3.Connection) -> None:
     client_id = db.upsert_client(conn, "Alvarez, Maria")
     case_id = db.upsert_case(conn, client_id, "2026-0142", "Alvarez, Maria/2026-0142")

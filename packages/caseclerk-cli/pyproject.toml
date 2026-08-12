@@ -1,0 +1,32 @@
+[project]
+name = "caseclerk-cli"
+version = "0.1.0"
+description = "The caseclerk console script: serve, init, process, status, and admin commands."
+requires-python = ">=3.11"
+authors = [{ name = "chrismeyersfsu" }]
+dependencies = [
+    "caseclerk-core",
+    "caseclerk-pipeline",
+    "caseclerk-artifacts",
+    "caseclerk-mcp",
+    "typer>=0.12",
+]
+
+[project.scripts]
+caseclerk = "caseclerk_cli.main:app"
+
+[tool.uv.sources]
+caseclerk-core = { workspace = true }
+caseclerk-pipeline = { workspace = true }
+caseclerk-artifacts = { workspace = true }
+caseclerk-mcp = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caseclerk_cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

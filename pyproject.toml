@@ -19,7 +19,14 @@ src = ["packages"]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["caseclerk_core", "caseclerk_pipeline", "caseclerk_artifacts"]
+known-first-party = [
+    "caseclerk_core",
+    "caseclerk_pipeline",
+    "caseclerk_artifacts",
+    "caseclerk_mcp",
+    "caseclerk_cli",
+    "caseclerk_fixtures",
+]
 
 [tool.ruff.format]
 quote-style = "double"
