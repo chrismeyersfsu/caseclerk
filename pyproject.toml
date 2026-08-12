@@ -13,12 +13,22 @@ dev = [
     "mypy>=1.11",
     "python-docx>=1.1",
     "fpdf2>=2.7",
+    "mcp>=2.0",
     # caseclerk-fixtures' own tests exercise the real stage-1 extractors against the
     # generated docs; caseclerk-fixtures itself has no runtime dependency on either.
     "caseclerk-pipeline",
     # caseclerk-cli's tests build a real fixture drive to drive init/process/status/retry
     # against; caseclerk-cli has no runtime dependency on caseclerk-fixtures.
     "caseclerk-fixtures",
+]
+
+[tool.pytest.ini_options]
+# picked up only when pytest is invoked with cwd == repo root (each package's own
+# pyproject.toml [tool.pytest.ini_options] takes precedence for a per-package run);
+# keeps `uv run pytest` from root fast by default while `-m e2e tests/e2e` opts in.
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: full end-to-end test that spawns the real `caseclerk serve` over stdio (slow; run with `-m e2e`)",
 ]
 
 [tool.ruff]

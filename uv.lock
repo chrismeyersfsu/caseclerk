@@ -23,6 +23,7 @@ dev = [
     { name = "caseclerk-fixtures", editable = "packages/caseclerk-fixtures" },
     { name = "caseclerk-pipeline", editable = "packages/caseclerk-pipeline" },
     { name = "fpdf2", specifier = ">=2.7" },
+    { name = "mcp", specifier = ">=2.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "python-docx", specifier = ">=1.1" },
