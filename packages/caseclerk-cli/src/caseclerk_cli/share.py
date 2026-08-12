@@ -24,7 +24,7 @@ import typer
 from caseclerk_cli import cloudflared as cloudflared_module
 from caseclerk_cli import shortcuts as shortcuts_module
 from caseclerk_core import db
-from caseclerk_core.config import data_dir, load_config
+from caseclerk_core.config import data_dir, load_config, save_config
 
 app = typer.Typer(help="Manage remote access for ChatGPT: the HTTP transport + a cloudflared tunnel.")
 
@@ -141,11 +141,44 @@ def _terminate(pid: object) -> bool:
 
 
 @app.command("setup")
-def share_setup() -> None:
+def share_setup(
+    credentials: str | None = typer.Option(
+        None,
+        "--credentials",
+        help=(
+            "Path to a tunnel credentials JSON from `cloudflared tunnel create` on "
+            "another, already-logged-in machine. With this, setup is fully "
+            "non-interactive -- `cloudflared tunnel login` is never needed here."
+        ),
+    ),
+    hostname: str | None = typer.Option(
+        None, "--hostname", help="Public hostname to route to this tunnel (required with --credentials)."
+    ),
+    tunnel_name: str | None = typer.Option(
+        None, "--tunnel-name", help="Tunnel name to record in config (defaults to share.tunnelName)."
+    ),
+) -> None:
     """Ensure a working cloudflared binary is available (downloading it if
     needed) without starting anything -- useful during one-time setup, before
     share.hostname is even configured, so the download happens up front rather
-    than as a surprise the first time `share start` runs."""
+    than as a surprise the first time `share start` runs.
+
+    With --credentials/--hostname, also performs the entire non-interactive
+    tunnel setup: installs the credentials, writes cloudflared's config.yml,
+    and updates share.hostname/tunnelName -- the whole on-site visit is
+    `init`, this command, then `share shortcuts`; the Cloudflare-side steps
+    (login, tunnel create, DNS route) happen ahead of time on the developer's
+    own machine."""
+    if tunnel_name is not None and credentials is None:
+        typer.echo("--tunnel-name requires --credentials.", err=True)
+        raise typer.Exit(code=1)
+    if hostname is not None and credentials is None:
+        typer.echo("--hostname requires --credentials.", err=True)
+        raise typer.Exit(code=1)
+    if credentials is not None and hostname is None:
+        typer.echo("--credentials requires --hostname.", err=True)
+        raise typer.Exit(code=1)
+
     try:
         binary = cloudflared_module.resolve(progress=lambda msg: typer.echo(msg))
     except cloudflared_module.CloudflaredError as exc:
@@ -155,6 +188,56 @@ def share_setup() -> None:
     version = cloudflared_module.installed_version(binary) or "unknown version"
     source = cloudflared_module.source_label(binary)
     typer.echo(f"cloudflared ready ({source}, {version}): {binary}")
+
+    if credentials is None or hostname is None:
+        return
+
+    cfg = load_config()
+    effective_tunnel_name = tunnel_name or cfg.share.tunnel_name
+
+    try:
+        result = cloudflared_module.install_credentials(
+            Path(credentials), hostname=hostname, port=cfg.share.port
+        )
+    except cloudflared_module.CloudflaredError as exc:
+        typer.echo(f"Could not install the tunnel credentials: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    new_cfg = cfg.model_copy(
+        update={
+            "share": cfg.share.model_copy(update={"hostname": hostname, "tunnel_name": effective_tunnel_name})
+        }
+    )
+    save_config(new_cfg)
+
+    typer.echo(f"Installed tunnel {result.tunnel_id} -> {hostname}")
+    typer.echo(f"share.hostname set to {hostname!r}, share.tunnelName set to {effective_tunnel_name!r}")
+
+    # A verification pass rather than a live tunnel dry-run: actually
+    # connecting would need real network access to Cloudflare's edge and a
+    # genuinely valid credentials file, neither of which this command can
+    # assume (or a test can mock) -- what's checked here is that setup left
+    # behind exactly the files `share start` will need.
+    typer.echo("\nVerifying setup:")
+    verified = True
+    if binary.is_file():
+        typer.echo(f"[ok]   cloudflared binary present: {binary}")
+    else:
+        verified = False
+        typer.echo("[FAIL] cloudflared binary missing")
+    if result.credentials_path.is_file():
+        typer.echo(f"[ok]   tunnel credentials installed: {result.credentials_path}")
+    else:
+        verified = False
+        typer.echo("[FAIL] tunnel credentials missing")
+    if result.config_path.is_file():
+        typer.echo(f"[ok]   cloudflared config written: {result.config_path}")
+    else:
+        verified = False
+        typer.echo("[FAIL] cloudflared config missing")
+
+    if not verified:
+        raise typer.Exit(code=1)
 
 
 @app.command("start")
@@ -183,8 +266,18 @@ def share_start() -> None:
 
     caseclerk_bin = _caseclerk_binary()
     server_pid = _spawn([str(caseclerk_bin), "serve", "--transport", "http", "--port", str(cfg.share.port)])
-    cloudflared_pid = _spawn(
-        [
+
+    # A config.yml from `share setup --credentials ...` means this machine
+    # never ran `cloudflared tunnel login` -- run the tunnel by pointing
+    # cloudflared straight at that config (which itself names the credentials
+    # file), rather than the `--url ... <name>` quick-tunnel form, which
+    # resolves the tunnel name through the Cloudflare API using a login-issued
+    # cert.pem this machine was deliberately never given.
+    cloudflared_config = cloudflared_module.config_path()
+    if cloudflared_config.is_file():
+        cloudflared_args = [str(cloudflared_bin), "--config", str(cloudflared_config), "tunnel", "run"]
+    else:
+        cloudflared_args = [
             str(cloudflared_bin),
             "tunnel",
             "run",
@@ -192,7 +285,7 @@ def share_start() -> None:
             f"http://127.0.0.1:{cfg.share.port}",
             cfg.share.tunnel_name,
         ]
-    )
+    cloudflared_pid = _spawn(cloudflared_args)
 
     _write_state(
         {

@@ -16,6 +16,7 @@ bumping the version means re-copying that block from the new release's notes.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import platform
 import stat
@@ -24,6 +25,7 @@ import sys
 import tarfile
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -237,3 +239,87 @@ def source_label(binary: Path) -> str:
     if binary.parent == _bin_dir():
         return "downloaded"
     return "unknown"
+
+
+# --- Non-interactive tunnel setup (`caseclerk share setup --credentials ...`) ---
+#
+# `cloudflared tunnel run --url ... <name>` (what `share start` uses when no
+# config.yml exists -- see below) needs `cloudflared tunnel login` to have
+# been run on *this* machine at some point, since name-based tunnel lookup
+# goes through the Cloudflare API using the login-issued cert.pem. A machine
+# that should never need that login (the attorney's machine) instead brings
+# over a tunnel *credentials* JSON -- produced by `cloudflared tunnel create`
+# on the developer's already-logged-in machine -- and runs the tunnel via an
+# explicit config.yml naming that credentials file directly by tunnel ID, no
+# API lookup or login involved.
+
+_CLOUDFLARED_CONFIG_DIRNAME = "cloudflared"
+CONFIG_FILE_NAME = "config.yml"
+
+
+def config_dir() -> Path:
+    path = data_dir() / _CLOUDFLARED_CONFIG_DIRNAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def config_path() -> Path:
+    return config_dir() / CONFIG_FILE_NAME
+
+
+def _parse_tunnel_id(credentials_path: Path) -> str:
+    try:
+        data = json.loads(credentials_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CloudflaredError(f"could not read credentials file {credentials_path}: {exc}") from exc
+    tunnel_id = data.get("TunnelID") if isinstance(data, dict) else None
+    if not tunnel_id:
+        raise CloudflaredError(
+            f"{credentials_path} does not look like a cloudflared tunnel credentials "
+            "file (no 'TunnelID' field) -- expected the JSON `cloudflared tunnel create` "
+            "writes, not cert.pem or anything else"
+        )
+    return str(tunnel_id)
+
+
+def _yaml_single_quoted(value: str) -> str:
+    """A YAML single-quoted scalar for `value`. Single-quoted (not double-
+    quoted) deliberately: it doesn't interpret backslashes, so a Windows path
+    like C:\\Users\\... round-trips unescaped -- the only special case is a
+    literal single quote, which gets doubled."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+@dataclass(frozen=True)
+class CredentialsInstallResult:
+    tunnel_id: str
+    credentials_path: Path
+    config_path: Path
+
+
+def install_credentials(credentials_src: Path, *, hostname: str, port: int) -> CredentialsInstallResult:
+    """Install a tunnel credentials JSON (from `cloudflared tunnel create` on
+    another, already-logged-in machine) and write cloudflared's config.yml, so
+    this machine can run the tunnel without ever running `cloudflared tunnel
+    login` itself. Idempotent -- re-running with the same/updated credentials
+    overwrites both files in place."""
+    if not credentials_src.is_file():
+        raise CloudflaredError(f"credentials file not found: {credentials_src}")
+    tunnel_id = _parse_tunnel_id(credentials_src)
+
+    directory = config_dir()
+    credentials_dest = directory / f"{tunnel_id}.json"
+    credentials_dest.write_bytes(credentials_src.read_bytes())
+
+    config_text = (
+        f"tunnel: {_yaml_single_quoted(tunnel_id)}\n"
+        f"credentials-file: {_yaml_single_quoted(str(credentials_dest))}\n"
+        "ingress:\n"
+        f"  - hostname: {_yaml_single_quoted(hostname)}\n"
+        f"    service: {_yaml_single_quoted(f'http://127.0.0.1:{port}')}\n"
+        "  - service: http_status:404\n"
+    )
+    path = config_path()
+    path.write_text(config_text, encoding="utf-8")
+
+    return CredentialsInstallResult(tunnel_id=tunnel_id, credentials_path=credentials_dest, config_path=path)

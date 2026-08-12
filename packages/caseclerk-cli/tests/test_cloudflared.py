@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import platform as platform_module
 import stat
 import sys
@@ -259,3 +260,86 @@ def test_source_label_unknown_for_arbitrary_path(tmp_path: Path) -> None:
     other.parent.mkdir(parents=True)
     other.write_text("x")
     assert cloudflared.source_label(other) == "unknown"
+
+
+# --- Non-interactive tunnel setup (install_credentials) ---
+
+
+def _write_fake_credentials(
+    tmp_path: Path, *, tunnel_id: str = "11111111-2222-3333-4444-555555555555"
+) -> Path:
+    path = tmp_path / "source-credentials.json"
+    path.write_text(
+        json.dumps({"AccountTag": "abc123", "TunnelSecret": "supersecret", "TunnelID": tunnel_id}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_yaml_single_quoted_escapes_embedded_quotes() -> None:
+    assert cloudflared._yaml_single_quoted("plain") == "'plain'"
+    assert cloudflared._yaml_single_quoted("O'Brien") == "'O''Brien'"
+
+
+def test_yaml_single_quoted_round_trips_windows_paths() -> None:
+    # the whole point of single- (not double-) quoting: no backslash escaping
+    windows_path = r"C:\Users\attorney\AppData\Local\caseclerk\cloudflared\x.json"
+    assert cloudflared._yaml_single_quoted(windows_path) == f"'{windows_path}'"
+
+
+def test_parse_tunnel_id_reads_tunnel_id_field(tmp_path: Path) -> None:
+    creds = _write_fake_credentials(tmp_path, tunnel_id="my-tunnel-id")
+    assert cloudflared._parse_tunnel_id(creds) == "my-tunnel-id"
+
+
+def test_parse_tunnel_id_rejects_missing_field(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"not": "a tunnel credentials file"}), encoding="utf-8")
+    with pytest.raises(cloudflared.CloudflaredError, match="TunnelID"):
+        cloudflared._parse_tunnel_id(bad)
+
+
+def test_parse_tunnel_id_rejects_malformed_json(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json at all", encoding="utf-8")
+    with pytest.raises(cloudflared.CloudflaredError, match="could not read"):
+        cloudflared._parse_tunnel_id(bad)
+
+
+def test_config_path_under_data_dir(tmp_path: Path) -> None:
+    assert cloudflared.config_path() == tmp_path / "data" / "cloudflared" / "config.yml"
+
+
+def test_install_credentials_writes_config_and_copies_credentials(tmp_path: Path) -> None:
+    source = _write_fake_credentials(tmp_path, tunnel_id="tunnel-abc")
+
+    result = cloudflared.install_credentials(source, hostname="files.example.com", port=8787)
+
+    assert result.tunnel_id == "tunnel-abc"
+    assert result.credentials_path == tmp_path / "data" / "cloudflared" / "tunnel-abc.json"
+    assert result.config_path == cloudflared.config_path()
+    assert result.credentials_path.read_bytes() == source.read_bytes()
+
+    config_text = result.config_path.read_text(encoding="utf-8")
+    assert "tunnel: 'tunnel-abc'" in config_text
+    assert f"credentials-file: '{result.credentials_path}'" in config_text
+    assert "hostname: 'files.example.com'" in config_text
+    assert "service: 'http://127.0.0.1:8787'" in config_text
+    assert "http_status:404" in config_text
+
+
+def test_install_credentials_missing_source_raises(tmp_path: Path) -> None:
+    with pytest.raises(cloudflared.CloudflaredError, match="not found"):
+        cloudflared.install_credentials(tmp_path / "nope.json", hostname="x.example.com", port=8787)
+
+
+def test_install_credentials_is_idempotent(tmp_path: Path) -> None:
+    source = _write_fake_credentials(tmp_path, tunnel_id="tunnel-abc")
+
+    first = cloudflared.install_credentials(source, hostname="one.example.com", port=8787)
+    second = cloudflared.install_credentials(source, hostname="two.example.com", port=9000)
+
+    assert first.config_path == second.config_path
+    config_text = second.config_path.read_text(encoding="utf-8")
+    assert "two.example.com" in config_text
+    assert "one.example.com" not in config_text

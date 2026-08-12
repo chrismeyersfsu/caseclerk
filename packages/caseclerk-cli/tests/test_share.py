@@ -102,6 +102,164 @@ def test_share_setup_reports_failure(
     assert "Could not obtain cloudflared" in result.output
 
 
+def _write_fake_credentials(tmp_path: Path, tunnel_id: str = "tunnel-abc") -> Path:
+    path = tmp_path / "credentials.json"
+    path.write_text(
+        json.dumps({"AccountTag": "a", "TunnelSecret": "s", "TunnelID": tunnel_id}), encoding="utf-8"
+    )
+    return path
+
+
+def test_share_setup_credentials_requires_hostname(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: isolated_env / "cloudflared"
+    )
+    creds = _write_fake_credentials(isolated_env)
+
+    result = runner.invoke(app, ["share", "setup", "--credentials", str(creds)])
+    assert result.exit_code == 1
+    assert "--credentials requires --hostname" in result.output
+
+
+def test_share_setup_hostname_requires_credentials(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: isolated_env / "cloudflared"
+    )
+    result = runner.invoke(app, ["share", "setup", "--hostname", "files.example.com"])
+    assert result.exit_code == 1
+    assert "--hostname requires --credentials" in result.output
+
+
+def test_share_setup_with_credentials_never_needs_cloudflared_login(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of --credentials: no `cloudflared tunnel login` call is
+    ever made by `share setup` -- only resolve() (the managed binary download)
+    and install_credentials() (a pure filesystem operation) run."""
+    binary_path = isolated_env / "cloudflared"
+    binary_path.write_text("fake binary")
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", lambda **kwargs: binary_path)
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "installed_version", lambda _p: "cloudflared 2026.7.3"
+    )
+    monkeypatch.setattr(share_module.cloudflared_module, "source_label", lambda _p: "downloaded")
+
+    def _fail_if_ever_spawned(*args: object, **kwargs: object) -> None:
+        raise AssertionError(
+            "share setup --credentials must never spawn a process (e.g. `cloudflared login`)"
+        )
+
+    monkeypatch.setattr(share_module, "_spawn", _fail_if_ever_spawned)
+    monkeypatch.setattr(subprocess, "run", _fail_if_ever_spawned)
+    monkeypatch.setattr(subprocess, "Popen", _fail_if_ever_spawned)
+
+    creds = _write_fake_credentials(isolated_env)
+    result = runner.invoke(
+        app,
+        [
+            "share",
+            "setup",
+            "--credentials",
+            str(creds),
+            "--hostname",
+            "files.example.com",
+            "--tunnel-name",
+            "custom-tunnel",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Installed tunnel tunnel-abc -> files.example.com" in result.output
+    assert "share.hostname set to 'files.example.com'" in result.output
+    assert "share.tunnelName set to 'custom-tunnel'" in result.output
+    assert "Verifying setup:" in result.output
+    assert "[FAIL]" not in result.output
+
+    from caseclerk_core.config import load_config
+
+    cfg = load_config()
+    assert cfg.share.hostname == "files.example.com"
+    assert cfg.share.tunnel_name == "custom-tunnel"
+
+    config_path = share_module.cloudflared_module.config_path()
+    assert config_path.is_file()
+    assert "files.example.com" in config_path.read_text(encoding="utf-8")
+
+
+def test_share_setup_credentials_defaults_tunnel_name_from_config(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_path = isolated_env / "cloudflared"
+    binary_path.write_text("fake binary")
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", lambda **kwargs: binary_path)
+    monkeypatch.setattr(share_module.cloudflared_module, "installed_version", lambda _p: "v")
+    monkeypatch.setattr(share_module.cloudflared_module, "source_label", lambda _p: "downloaded")
+
+    creds = _write_fake_credentials(isolated_env)
+    result = runner.invoke(
+        app, ["share", "setup", "--credentials", str(creds), "--hostname", "files.example.com"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "share.tunnelName set to 'caseclerk'" in result.output  # ShareConfig's default
+
+
+def test_share_setup_credentials_reports_bad_credentials_file(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: isolated_env / "cloudflared"
+    )
+    bad = isolated_env / "not-credentials.json"
+    bad.write_text("{}", encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["share", "setup", "--credentials", str(bad), "--hostname", "files.example.com"]
+    )
+    assert result.exit_code == 1
+    assert "Could not install the tunnel credentials" in result.output
+
+
+def test_share_start_uses_config_yml_when_credentials_were_installed(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
+) -> None:
+    binary_path = isolated_env / "cloudflared"
+    binary_path.write_text("fake binary")
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", lambda **kwargs: binary_path)
+    monkeypatch.setattr(share_module.cloudflared_module, "installed_version", lambda _p: "v")
+    monkeypatch.setattr(share_module.cloudflared_module, "source_label", lambda _p: "downloaded")
+
+    creds = _write_fake_credentials(isolated_env)
+    setup_result = runner.invoke(
+        app, ["share", "setup", "--credentials", str(creds), "--hostname", "files.example.com"]
+    )
+    assert setup_result.exit_code == 0, setup_result.output
+
+    captured_args: list[list[str]] = []
+    original_spawn = share_module._spawn
+
+    def _capturing_spawn(args: list[str]) -> int:
+        captured_args.append(args)
+        return original_spawn(args)
+
+    monkeypatch.setattr(share_module, "_spawn", _capturing_spawn)
+
+    start_result = runner.invoke(app, ["share", "start"])
+    assert start_result.exit_code == 0, start_result.output
+
+    # the second _spawn call is the cloudflared invocation (the first is the
+    # HTTP server); it must use --config, not the login-dependent --url form
+    cloudflared_args = captured_args[1]
+    assert "--config" in cloudflared_args
+    assert str(share_module.cloudflared_module.config_path()) in cloudflared_args
+    assert "--url" not in cloudflared_args
+
+    runner.invoke(app, ["share", "stop"])
+
+
 def test_share_shortcuts_non_windows_prints_message(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
