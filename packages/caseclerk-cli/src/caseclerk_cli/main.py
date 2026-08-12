@@ -16,7 +16,7 @@ from pathlib import Path
 
 import typer
 
-from caseclerk_cli import config_commands
+from caseclerk_cli import config_commands, share
 from caseclerk_cli.claude_desktop import SERVER_ENTRY, claude_desktop_config_path, write_claude_desktop_entry
 from caseclerk_core import db, scan
 from caseclerk_core import update as core_update
@@ -27,6 +27,7 @@ from caseclerk_pipeline import queue
 
 app = typer.Typer(help="CaseClerk: a case-files MCP server for a small law firm.", no_args_is_help=True)
 app.add_typer(config_commands.app, name="config")
+app.add_typer(share.app, name="share")
 
 
 def _print_version(show: bool) -> None:
@@ -59,12 +60,30 @@ def _make_case_dir_resolver(conn: sqlite3.Connection, documents_root: Path) -> C
 
 
 @app.command()
-def serve() -> None:
-    """Run the MCP server over stdio (what Claude Desktop/Code launches)."""
-    # imported lazily so every other command's startup skips loading the mcp SDK
-    from caseclerk_mcp.server import serve as mcp_serve
+def serve(
+    transport: str = typer.Option(
+        "stdio", "--transport", help="stdio (default, what Claude Desktop/Code launches) or http."
+    ),
+    port: int | None = typer.Option(
+        None, "--port", help="Port for --transport http (default: share.port from config)."
+    ),
+) -> None:
+    """Run the MCP server. http is bound to 127.0.0.1 ONLY -- there is no --host flag;
+    `caseclerk share start` (a cloudflared tunnel) is the only supported way to expose
+    it beyond localhost."""
+    if transport not in ("stdio", "http"):
+        typer.echo(f"Unknown --transport {transport!r}; expected 'stdio' or 'http'.", err=True)
+        raise typer.Exit(code=1)
 
-    mcp_serve()
+    # imported lazily so every other command's startup skips loading the mcp SDK
+    if transport == "stdio":
+        from caseclerk_mcp.server import serve as mcp_serve
+
+        mcp_serve()
+    else:
+        from caseclerk_mcp.server import serve_http as mcp_serve_http
+
+        mcp_serve_http(port=port)
 
 
 @app.command()
@@ -229,6 +248,28 @@ def update() -> None:
 
 
 @app.command()
+def audit(
+    limit: int = typer.Option(20, "--limit", help="Maximum number of entries to show."),
+) -> None:
+    """Show the most recent HTTP-transport tool calls (stdio never writes these)."""
+    conn = db.connect()
+    try:
+        entries = db.list_remote_requests(conn, limit=limit)
+    finally:
+        conn.close()
+
+    if not entries:
+        typer.echo("No audit entries yet.")
+        return
+    for entry in entries:
+        label = "ok" if entry.ok else "FAIL"
+        line = f"[{entry.ts.isoformat()}] {entry.tool} - {label}"
+        if entry.error:
+            line += f": {entry.error}"
+        typer.echo(line)
+
+
+@app.command()
 def doctor() -> None:
     """Check FTS5 availability, uv on PATH, config validity, documentsRoot, and db writability."""
     healthy = True
@@ -271,6 +312,13 @@ def doctor() -> None:
     except Exception as exc:  # noqa: BLE001
         healthy = False
         typer.echo(f"[FAIL] database is not writable: {exc}")
+
+    if cfg is not None and cfg.share.hostname:
+        if shutil.which("cloudflared"):
+            typer.echo("[ok]   cloudflared is on PATH")
+        else:
+            healthy = False
+            typer.echo("[FAIL] cloudflared is not on PATH (required for `caseclerk share`)")
 
     if not healthy:
         raise typer.Exit(code=1)
