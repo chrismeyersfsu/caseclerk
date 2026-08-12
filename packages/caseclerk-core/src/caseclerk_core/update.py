@@ -21,7 +21,7 @@ from importlib.metadata import version as pkg_version
 
 import httpx
 
-from caseclerk_core import db
+from caseclerk_core import binary_update, db
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +151,35 @@ def _default_spawn(args: list[str]) -> object:
     )
 
 
-def apply_update(version_tag: str, *, spawn: SpawnFn = _default_spawn) -> object:
-    """Spawn a detached `uv tool install` for version_tag; takes effect on the host's next restart.
+def apply_update(
+    version_tag: str,
+    *,
+    spawn: SpawnFn = _default_spawn,
+    frozen: bool | None = None,
+    client: httpx.Client | None = None,
+) -> object:
+    """Apply version_tag. Two entirely different mechanisms depending on how this
+    install got here:
 
-    `uv tool install` has no `--from`: the source has to be the single PACKAGE argument
-    itself. For a git repo that's a workspace (no root [project], the installable package
-    lives in a subdirectory) that means a PEP 508 direct reference with a `#subdirectory=`
-    fragment -- plain `--from git+<repo>@<tag> <name>` (an older/other tool's syntax) does
-    not exist in this uv and silently isn't accepted as an install source.
+    - Normal (uv tool) install: spawn a detached `uv tool install`; takes effect
+      on the host's next restart. `uv tool install` has no `--from`: the source
+      has to be the single PACKAGE argument itself. For a git repo that's a
+      workspace (no root [project], the installable package lives in a
+      subdirectory) that means a PEP 508 direct reference with a
+      `#subdirectory=` fragment -- plain `--from git+<repo>@<tag> <name>` (an
+      older/other tool's syntax) does not exist in this uv and silently isn't
+      accepted as an install source.
+    - Frozen (PyInstaller) install: there is no Python/uv on this machine to run
+      `uv tool install` with, so download and swap in the packaged build instead
+      -- see `binary_update.apply_binary_update`. Returns a `BinaryUpdateResult`
+      rather than a spawned process handle.
+
+    `frozen` defaults to the real `sys.frozen` state; overridable for tests.
     """
+    is_frozen = binary_update.is_frozen() if frozen is None else frozen
+    if is_frozen:
+        return binary_update.apply_binary_update(version_tag, client=client)
+
     requirement = f"{DISTRIBUTION_NAME} @ git+https://github.com/{REPO}@{version_tag}#subdirectory=packages/{DISTRIBUTION_NAME}"
     args = ["uv", "tool", "install", "--force", requirement]
     logger.info("spawning self-update: %s", " ".join(args))

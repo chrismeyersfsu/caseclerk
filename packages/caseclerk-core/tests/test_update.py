@@ -1,4 +1,5 @@
 import sqlite3
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from caseclerk_core import db, update
+from caseclerk_core import binary_update, db, update
 
 
 @pytest.fixture
@@ -138,3 +139,33 @@ def test_apply_update_spawns_uv_tool_install_via_injected_spawn() -> None:
         "caseclerk-cli @ git+https://github.com/chrismeyersfsu/caseclerk@v1.2.3"
         "#subdirectory=packages/caseclerk-cli",
     ]
+
+
+def test_apply_update_never_spawns_uv_when_frozen_is_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Platform-independent: this test only cares that spawn (uv) is never called
+    # when frozen=True, regardless of what OS it happens to run on in CI.
+    monkeypatch.setattr(binary_update, "release_asset_name", lambda: None)
+
+    def _fail_spawn(args: list[str]) -> object:
+        raise AssertionError("must not run uv tool install for a frozen (binary) install")
+
+    result = update.apply_update("v1.2.3", spawn=_fail_spawn, frozen=True)
+
+    assert isinstance(result, binary_update.BinaryUpdateResult)
+
+
+def test_apply_update_uses_real_sys_frozen_when_not_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    # No platform has a published asset in this sandbox's actual sys.platform,
+    # so apply_binary_update short-circuits before ever touching the network --
+    # this test proves the frozen->binary_update routing, not the download path
+    # (that's covered, fully network-mocked, in test_binary_update.py).
+    monkeypatch.setattr(binary_update, "release_asset_name", lambda: None)
+
+    def _fail_spawn(args: list[str]) -> object:
+        raise AssertionError("must not run uv tool install when sys.frozen is set")
+
+    result = update.apply_update("v1.2.3", spawn=_fail_spawn)
+
+    assert isinstance(result, binary_update.BinaryUpdateResult)
+    assert result.ok is False
