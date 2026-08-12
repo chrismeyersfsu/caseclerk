@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "The CaseClerk MCP server: constrained case-file tools over stdio."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]
