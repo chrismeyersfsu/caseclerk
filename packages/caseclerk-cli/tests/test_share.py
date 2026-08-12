@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from typer.testing import CliRunner
 from caseclerk_cli import share as share_module
 from caseclerk_cli.main import app
 
-_FAKE_CLOUDFLARED_SCRIPT = """#!/usr/bin/env python3
+_FAKE_PROCESS_PY = """
 import time
 try:
     while True:
@@ -21,21 +22,33 @@ except KeyboardInterrupt:
 
 
 @pytest.fixture
-def fake_process_script(tmp_path: Path) -> Path:
-    """A tiny long-running executable standing in for both cloudflared and the
-    caseclerk HTTP server subprocess -- share.py's job is process lifecycle
-    management (pidfile, is_alive, terminate), not what either child actually does."""
-    script = tmp_path / "fake_process"
-    script.write_text(_FAKE_CLOUDFLARED_SCRIPT, encoding="utf-8")
-    mode = script.stat().st_mode
-    script.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return script
+def fake_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace share._spawn with one that always launches a tiny long-running
+    Python process via sys.executable, regardless of the (fake) binary path/args
+    share.py thinks it's spawning. share.py's job under test is process lifecycle
+    management (pidfile, is_alive, terminate), not what either child actually is --
+    and a plain script isn't directly launchable by Windows' CreateProcess the way
+    a POSIX shebang script is, so we always go through the real interpreter."""
+    script = tmp_path / "fake_process.py"
+    script.write_text(_FAKE_PROCESS_PY, encoding="utf-8")
+
+    def _fake_spawn(_args: list[str]) -> int:
+        process = subprocess.Popen(
+            [sys.executable, str(script)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return process.pid
+
+    monkeypatch.setattr(share_module, "_spawn", _fake_spawn)
 
 
 def test_share_start_requires_hostname_configured(
-    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_process_script: Path
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: str(fake_process_script))
+    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
     result = runner.invoke(app, ["share", "start"])
     assert result.exit_code == 1
     assert "share.hostname is not configured" in result.output
@@ -64,11 +77,10 @@ def test_share_stop_when_not_running(runner: CliRunner, isolated_env: Path) -> N
 
 
 def test_share_start_stop_status_lifecycle(
-    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_process_script: Path
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
 ) -> None:
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: str(fake_process_script))
-    monkeypatch.setattr(share_module, "_caseclerk_binary", lambda: fake_process_script)
+    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
 
     start_result = runner.invoke(app, ["share", "start"])
     assert start_result.exit_code == 0, start_result.output
@@ -102,13 +114,12 @@ def test_share_start_stop_status_lifecycle(
 
 
 def test_share_status_shows_recent_audit_entries(
-    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_process_script: Path
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
 ) -> None:
     from caseclerk_core import db
 
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: str(fake_process_script))
-    monkeypatch.setattr(share_module, "_caseclerk_binary", lambda: fake_process_script)
+    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
 
     runner.invoke(app, ["share", "start"])
 

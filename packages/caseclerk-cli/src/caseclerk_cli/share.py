@@ -68,13 +68,16 @@ def _clear_state() -> None:
 def _is_alive(pid: object) -> bool:
     if not isinstance(pid, int):
         return False
+    if sys.platform == "win32":
+        return _is_alive_windows(pid)
     # Reap first if it's our (zombie, already-signaled) child -- a no-op, harmlessly
     # suppressed, when it isn't: real usage runs `start` and `stop` as separate CLI
     # invocations, so by the time `stop` runs the child has long since been reparented
     # to init, which reaps it. Tests invoke both in one process, where we ARE still the
     # parent; without reaping, a dead-but-unwaited child keeps answering kill(pid, 0).
     # os.WNOHANG doesn't exist in Windows' typeshed stub at all (not just at runtime),
-    # so this is a getattr, not a plain attribute access -- and skipped entirely there.
+    # so this is a getattr, not a plain attribute access -- and skipped entirely there
+    # (this whole branch is POSIX-only anyway; see _is_alive_windows for win32).
     wnohang = getattr(os, "WNOHANG", None)
     if wnohang is not None:
         with contextlib.suppress(ChildProcessError, OSError):
@@ -84,6 +87,23 @@ def _is_alive(pid: object) -> bool:
     except OSError:
         return False
     return True
+
+
+def _is_alive_windows(pid: int) -> bool:
+    """`os.kill(pid, 0)` is not a safe existence probe on Windows: signal 0 is
+    literally CTRL_C_EVENT there, so it delivers a real Ctrl+C to the target
+    instead of merely checking it exists. `tasklist` is a stock Windows tool
+    that answers the question without touching the process at all."""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/fi", f"PID eq {pid}", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return str(pid) in result.stdout
 
 
 def _spawn(args: list[str]) -> int:
