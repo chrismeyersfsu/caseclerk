@@ -1,0 +1,21 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Test fixture output (generated Clio drive trees, e2e artifacts)
+.fixtures/
+tests/e2e/output/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

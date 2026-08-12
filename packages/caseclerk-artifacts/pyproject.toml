@@ -1,0 +1,17 @@
+[project]
+name = "caseclerk-artifacts"
+version = "0.1.0"
+description = "Email draft artifact (.eml/.txt) writer for CaseClerk."
+requires-python = ">=3.11"
+authors = [{ name = "chrismeyersfsu" }]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/caseclerk_artifacts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
