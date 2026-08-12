@@ -1,0 +1,42 @@
+name: checks
+
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: "Package directory name under packages/, e.g. caseclerk-core"
+        required: true
+        type: string
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Lint (ruff check)
+        run: uv run ruff check packages/${{ inputs.package }}
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check packages/${{ inputs.package }}
+
+      - name: Type check (mypy)
+        run: uv run mypy packages/${{ inputs.package }}
+
+      - name: Test (pytest)
+        run: uv run pytest packages/${{ inputs.package }}/tests

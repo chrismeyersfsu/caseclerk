@@ -1,0 +1,24 @@
+name: checks-fixtures
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/caseclerk-fixtures/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-fixtures.yml"
+  pull_request:
+    paths:
+      - "packages/caseclerk-fixtures/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-fixtures.yml"
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-fixtures

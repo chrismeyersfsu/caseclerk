@@ -1,0 +1,24 @@
+name: checks-core
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/caseclerk-core/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-core.yml"
+  pull_request:
+    paths:
+      - "packages/caseclerk-core/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-core.yml"
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-core

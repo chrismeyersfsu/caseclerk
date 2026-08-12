@@ -1,0 +1,30 @@
+name: checks-mcp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/caseclerk-mcp/**"
+      - "packages/caseclerk-pipeline/**"
+      - "packages/caseclerk-artifacts/**"
+      - "packages/caseclerk-core/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-mcp.yml"
+  pull_request:
+    paths:
+      - "packages/caseclerk-mcp/**"
+      - "packages/caseclerk-pipeline/**"
+      - "packages/caseclerk-artifacts/**"
+      - "packages/caseclerk-core/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-mcp.yml"
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-mcp
