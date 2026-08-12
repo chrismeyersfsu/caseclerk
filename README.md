@@ -20,11 +20,11 @@ MCP host (Claude Desktop / Claude Code / any MCP client)
    (tools + prompt)                   chunks + FTS5, jobs, meta)
         │
         ▼
-   Clio Drive folder on disk
-   <clioRoot>/<Client>/<CaseNumber>/**
+   Case documents folder on disk
+   <documentsRoot>/<Client>/<CaseNumber>/**
 ```
 
-Documents are never sent to the model whole. A background scan walks the Clio Drive folder, converts each document to markdown (`.docx` via `mammoth`, `.pdf` via `pdfminer.six`, `.txt`/`.md` as-is), chunks it, and indexes it into SQLite with full-text search — that index, not the filesystem, is what the MCP tools query. The only write path is `save_email_draft`, which writes a matched `.eml`/`.txt` pair into `<case>/emails-generated/` and nothing else.
+Documents are never sent to the model whole. A background scan walks the documents folder, converts each document to markdown (`.docx` via `mammoth`, `.pdf` via `pdfminer.six`, `.txt`/`.md` as-is), chunks it, and indexes it into SQLite with full-text search — that index, not the filesystem, is what the MCP tools query. The only write path is `save_email_draft`, which writes a matched `.eml`/`.txt` pair into `<case>/emails-generated/` and nothing else.
 
 ## Install
 
@@ -35,7 +35,7 @@ uv tool install --from git+https://github.com/chrismeyersfsu/caseclerk caseclerk
 caseclerk init --write-claude-config
 ```
 
-`init` discovers your Clio Drive, writes `config.json`, and (with `--write-claude-config`, or when you confirm interactively) merges a `caseclerk` entry into `claude_desktop_config.json`. Restart Claude Desktop afterward.
+`init` discovers your case documents folder, writes `config.json`, and (with `--write-claude-config`, or when you confirm interactively) merges a `caseclerk` entry into `claude_desktop_config.json`. Restart Claude Desktop afterward.
 
 ### Claude Code
 
@@ -54,14 +54,14 @@ CaseClerk speaks plain MCP over stdio — the command any host needs is `casecle
 | Command | Description |
 |---|---|
 | `caseclerk serve` | Run the MCP server over stdio (what an MCP host launches) |
-| `caseclerk init [--yes] [--write-claude-config]` | Discover the Clio Drive, write `config.json`, print/write MCP client setup |
-| `caseclerk process [--concurrency N]` | Scan `clioRoot` for new/changed documents and drain the processing queue once |
+| `caseclerk init [--yes] [--write-claude-config]` | Discover the case documents folder, write `config.json`, print/write MCP client setup |
+| `caseclerk process [--concurrency N]` | Scan `documentsRoot` for new/changed documents and drain the processing queue once |
 | `caseclerk status` | Show queue/indexed/failed counts and any cached update-available version |
 | `caseclerk failures` | List every document currently in the failed state |
 | `caseclerk retry <document_id>` / `caseclerk retry --all-failed` | Requeue a document, or every failed document |
 | `caseclerk config path` / `get <key>` / `set <key> <value>` | Read or update `config.json` by dotted camelCase key (e.g. `processing.concurrency`) |
 | `caseclerk update` | Check GitHub Releases and apply an update on the spot if one is available |
-| `caseclerk doctor` | Verify SQLite has FTS5, `uv` is on `PATH`, config is valid, `clioRoot` exists, the db is writable |
+| `caseclerk doctor` | Verify SQLite has FTS5, `uv` is on `PATH`, config is valid, `documentsRoot` exists, the db is writable |
 
 During development, run any of these as `uv run caseclerk <command>` from the repo root instead of installing.
 
@@ -71,7 +71,7 @@ Config lives at `platformdirs.user_config_dir("caseclerk")/config.json`. Precede
 
 ```json
 {
-  "clioRoot": "A:\\",
+  "documentsRoot": "A:\\",
   "emailsFolderName": "emails-generated",
   "emailFileNameTemplate": "{yyyy}-{mm}-{dd}-{slug}",
   "processing": { "concurrency": 2, "watch": true, "ignore": ["emails-generated/**"] },
@@ -83,7 +83,7 @@ Config lives at `platformdirs.user_config_dir("caseclerk")/config.json`. Precede
 
 | Env var | Overrides |
 |---|---|
-| `CASECLERK_CLIO_ROOT` | `clioRoot` |
+| `CASECLERK_DOCUMENTS_ROOT` | `documentsRoot` |
 | `CASECLERK_EMAILS_FOLDER_NAME` | `emailsFolderName` |
 | `CASECLERK_EMAIL_FILE_NAME_TEMPLATE` | `emailFileNameTemplate` |
 | `CASECLERK_PROCESSING_CONCURRENCY` | `processing.concurrency` |
@@ -112,10 +112,10 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy packages
 uv run pytest                          # unit suite only (fast); e2e is excluded by default
 
-# build a synthetic Clio Drive to poke at locally
-uv run python -m caseclerk_fixtures /tmp/clio-fixture
-CASECLERK_CLIO_ROOT=/tmp/clio-fixture uv run caseclerk process
-CASECLERK_CLIO_ROOT=/tmp/clio-fixture uv run caseclerk status
+# build a synthetic documents drive to poke at locally
+uv run python -m caseclerk_fixtures /tmp/documents-fixture
+CASECLERK_DOCUMENTS_ROOT=/tmp/documents-fixture uv run caseclerk process
+CASECLERK_DOCUMENTS_ROOT=/tmp/documents-fixture uv run caseclerk status
 
 # full end-to-end run: spawns the real `caseclerk serve` over stdio against a
 # fresh fixture drive and writes a human-readable HTML report

@@ -1,8 +1,8 @@
-"""Walk ``<client>/<case-number>/**`` under clioRoot into the database.
+"""Walk ``<client>/<case-number>/**`` under documentsRoot into the database.
 
 Only the top two levels are treated as client/case; everything below is
 a document's rel_path within its case. Every filesystem touch below
-clio_root goes through :func:`caseclerk_core.paths.safe_join` so a
+documents_root goes through :func:`caseclerk_core.paths.safe_join` so a
 maliciously named client/case directory (or a symlink planted inside
 one) can't walk the scanner outside the root.
 """
@@ -56,15 +56,15 @@ def _hash_file(path: Path) -> str:
 
 def scan(
     conn: sqlite3.Connection,
-    clio_root: str | os.PathLike[str],
+    documents_root: str | os.PathLike[str],
     *,
     emails_folder_name: str = "emails-generated",
     ignore_globs: Iterable[str] = (),
 ) -> ScanResult:
-    """Scan clio_root, upserting clients/cases/documents and enqueueing jobs for new/changed files."""
-    root = Path(os.path.realpath(clio_root))
+    """Scan documents_root, upserting clients/cases/documents and enqueueing jobs for new/changed files."""
+    root = Path(os.path.realpath(documents_root))
     if not root.is_dir():
-        raise FileNotFoundError(f"clioRoot is not a directory: {clio_root}")
+        raise FileNotFoundError(f"documentsRoot is not a directory: {documents_root}")
     all_ignore_globs = [f"{emails_folder_name}/**", *ignore_globs]
 
     clients_seen = 0

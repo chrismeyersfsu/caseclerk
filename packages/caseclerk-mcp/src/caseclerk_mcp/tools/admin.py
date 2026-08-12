@@ -74,7 +74,7 @@ def register_admin_tools(server: MCPServer[None], deps: Deps) -> None:
         cfg = deps.config
         return SettingsOut(
             version=current_version(),
-            clio_root=str(deps.clio_root) if deps.clio_root else None,
+            documents_root=str(deps.documents_root) if deps.documents_root else None,
             emails_folder_name=cfg.emails_folder_name,
             email_file_name_template=cfg.email_file_name_template,
             processing_concurrency=cfg.processing.concurrency,

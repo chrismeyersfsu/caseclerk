@@ -8,15 +8,15 @@ from caseclerk_cli.main import app
 from caseclerk_fixtures import build_fixture_drive
 
 
-def test_process_without_clio_root_fails_cleanly(runner: CliRunner, isolated_env: Path) -> None:
+def test_process_without_documents_root_fails_cleanly(runner: CliRunner, isolated_env: Path) -> None:
     result = runner.invoke(app, ["process"])
     assert result.exit_code == 1
-    assert "clioRoot is not configured" in result.output
+    assert "documentsRoot is not configured" in result.output
 
 
 def test_process_status_failures_retry_workflow(runner: CliRunner, isolated_env: Path) -> None:
-    clio_root = build_fixture_drive(isolated_env / "clio")
-    set_result = runner.invoke(app, ["config", "set", "clioRoot", str(clio_root)])
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    set_result = runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
     assert set_result.exit_code == 0
 
     process_result = runner.invoke(app, ["process"])
@@ -58,8 +58,8 @@ def test_process_status_failures_retry_workflow(runner: CliRunner, isolated_env:
 
 
 def test_process_is_safe_to_run_twice(runner: CliRunner, isolated_env: Path) -> None:
-    clio_root = build_fixture_drive(isolated_env / "clio")
-    runner.invoke(app, ["config", "set", "clioRoot", str(clio_root)])
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
 
     first = runner.invoke(app, ["process"])
     assert "12 new" in first.output

@@ -43,8 +43,8 @@ INSTRUCTIONS = (
 
 def _startup_scan_and_queue(deps: Deps) -> None:
     """Runs off the main thread so a fresh drive gets indexed without blocking startup."""
-    if deps.clio_root is None:
-        logger.warning("startup scan skipped: clioRoot is not configured")
+    if deps.documents_root is None:
+        logger.warning("startup scan skipped: documentsRoot is not configured")
         return
     try:
         conn = deps.open_db()
@@ -54,18 +54,18 @@ def _startup_scan_and_queue(deps: Deps) -> None:
     try:
         scan.scan(
             conn,
-            deps.clio_root,
+            deps.documents_root,
             emails_folder_name=deps.config.emails_folder_name,
             ignore_globs=deps.config.processing.ignore,
         )
 
-        clio_root = deps.clio_root
+        documents_root = deps.documents_root
 
         def case_dir_for(case_id: int) -> Path:
             case = db.get_case(conn, case_id)
             if case is None:
                 raise PathContainmentError(f"unknown case_id {case_id}")
-            return safe_join(clio_root, case.rel_path)
+            return safe_join(documents_root, case.rel_path)
 
         queue.run_queue(conn, case_dir_for, concurrency=deps.config.processing.concurrency)
     except Exception:
@@ -91,15 +91,15 @@ def _make_lifespan(
 def build_server(
     config: Config | None = None,
     *,
-    clio_root: Path | str | None = None,
+    documents_root: Path | str | None = None,
     db_path: Path | None = None,
     run_startup_scan: bool = True,
 ) -> MCPServer[None]:
     """Construct the caseclerk MCPServer with every tool and the draft-email prompt registered."""
     cfg = config or load_config()
-    root_str = str(clio_root) if clio_root is not None else cfg.clio_root
+    root_str = str(documents_root) if documents_root is not None else cfg.documents_root
     root = Path(root_str) if root_str else None
-    deps = Deps(config=cfg, clio_root=root, prompts_dir=resolve_prompts_dir(cfg), db_path=db_path)
+    deps = Deps(config=cfg, documents_root=root, prompts_dir=resolve_prompts_dir(cfg), db_path=db_path)
 
     server: MCPServer[None] = MCPServer(
         SERVER_NAME,

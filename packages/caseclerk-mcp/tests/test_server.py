@@ -53,14 +53,14 @@ def test_resolve_prompts_dir_defaults_to_packaged_template() -> None:
 
 
 def test_startup_scan_and_queue_indexes_a_fresh_drive(env: Env) -> None:
-    case_dir = env.clio_root / "Alvarez, Maria" / "2026-0142"
+    case_dir = env.documents_root / "Alvarez, Maria" / "2026-0142"
     case_dir.mkdir(parents=True)
     (case_dir / "letter.txt").write_text("The deposition on April 21, 2026 revealed a conflict.")
 
     deps = Deps(
-        config=Config(clio_root=str(env.clio_root)),
-        clio_root=env.clio_root,
-        prompts_dir=env.clio_root,
+        config=Config(documents_root=str(env.documents_root)),
+        documents_root=env.documents_root,
+        prompts_dir=env.documents_root,
         db_path=env.db_path,
     )
     _startup_scan_and_queue(deps)
@@ -76,9 +76,9 @@ def test_startup_scan_and_queue_indexes_a_fresh_drive(env: Env) -> None:
         conn.close()
 
 
-def test_startup_scan_skipped_when_clio_root_unconfigured(tmp_path: Path) -> None:
+def test_startup_scan_skipped_when_documents_root_unconfigured(tmp_path: Path) -> None:
     db_path = tmp_path / "caseclerk.db"
-    deps = Deps(config=Config(), clio_root=None, prompts_dir=tmp_path, db_path=db_path)
+    deps = Deps(config=Config(), documents_root=None, prompts_dir=tmp_path, db_path=db_path)
     _startup_scan_and_queue(deps)  # must not raise
 
     conn = db.connect(db_path)
@@ -88,10 +88,10 @@ def test_startup_scan_skipped_when_clio_root_unconfigured(tmp_path: Path) -> Non
         conn.close()
 
 
-def test_build_server_reads_clio_root_from_config_when_not_overridden(tmp_path: Path) -> None:
-    clio_root = tmp_path / "clio"
-    clio_root.mkdir()
-    cfg = Config(clio_root=str(clio_root))
+def test_build_server_reads_documents_root_from_config_when_not_overridden(tmp_path: Path) -> None:
+    documents_root = tmp_path / "documents"
+    documents_root.mkdir()
+    cfg = Config(documents_root=str(documents_root))
 
     server = build_server(cfg, db_path=tmp_path / "caseclerk.db", run_startup_scan=False)
 

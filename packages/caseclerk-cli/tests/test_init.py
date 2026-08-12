@@ -23,8 +23,8 @@ def _fake_discover(candidate: Path, score: int = 4) -> Callable[..., list[Discov
 def test_init_yes_writes_config_from_top_candidate(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    clio_root = build_fixture_drive(isolated_env / "clio")
-    monkeypatch.setattr(main, "discover", _fake_discover(clio_root))
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    monkeypatch.setattr(main, "discover", _fake_discover(documents_root))
 
     result = runner.invoke(app, ["init", "--yes"])
     assert result.exit_code == 0, result.output
@@ -32,7 +32,7 @@ def test_init_yes_writes_config_from_top_candidate(
 
     config_file = Path(runner.invoke(app, ["config", "path"]).output.strip())
     data = json.loads(config_file.read_text())
-    assert data["clioRoot"] == str(clio_root)
+    assert data["documentsRoot"] == str(documents_root)
 
 
 def test_init_no_candidates_fails_cleanly(
@@ -41,14 +41,14 @@ def test_init_no_candidates_fails_cleanly(
     monkeypatch.setattr(main, "discover", lambda *_a, **_k: [])
     result = runner.invoke(app, ["init", "--yes"])
     assert result.exit_code == 1
-    assert "No Clio Drive candidates found" in result.output
+    assert "No documents-root candidates found" in result.output
 
 
 def test_init_declines_without_yes_when_not_confirmed(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    clio_root = build_fixture_drive(isolated_env / "clio")
-    monkeypatch.setattr(main, "discover", _fake_discover(clio_root))
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    monkeypatch.setattr(main, "discover", _fake_discover(documents_root))
 
     result = runner.invoke(app, ["init"], input="n\n")
     assert result.exit_code == 1
@@ -60,8 +60,8 @@ def test_init_declines_without_yes_when_not_confirmed(
 def test_init_write_claude_config_flag_writes_and_merges(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    clio_root = build_fixture_drive(isolated_env / "clio")
-    monkeypatch.setattr(main, "discover", _fake_discover(clio_root))
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    monkeypatch.setattr(main, "discover", _fake_discover(documents_root))
 
     fake_claude_config = tmp_path / "claude" / "claude_desktop_config.json"
     fake_claude_config.parent.mkdir(parents=True)

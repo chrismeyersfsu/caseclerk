@@ -1,6 +1,6 @@
 """Filesystem containment guardrails.
 
-Every module that touches files under ``clioRoot`` goes through
+Every module that touches files under ``documentsRoot`` goes through
 :func:`safe_join` (directly, or via :func:`case_dir`). It is the only
 place traversal (``..``) and symlink escapes are rejected, by resolving
 both the root and the candidate to their real, symlink-free paths and
@@ -45,6 +45,6 @@ def safe_join(root: str | os.PathLike[str], *parts: str) -> Path:
     return candidate_real
 
 
-def case_dir(clio_root: str | os.PathLike[str], client: str, case_number: str) -> Path:
-    """The directory for one client/case, guaranteed under ``clio_root``."""
-    return safe_join(clio_root, client, case_number)
+def case_dir(documents_root: str | os.PathLike[str], client: str, case_number: str) -> Path:
+    """The directory for one client/case, guaranteed under ``documents_root``."""
+    return safe_join(documents_root, client, case_number)

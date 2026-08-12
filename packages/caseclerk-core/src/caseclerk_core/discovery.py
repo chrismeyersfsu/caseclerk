@@ -1,4 +1,4 @@
-"""Clio Drive root auto-discovery.
+"""Documents root auto-discovery.
 
 Every function here is pure and takes its OS/filesystem inputs as
 arguments (or accepts an injected candidate list outright), so tests
@@ -61,26 +61,33 @@ def score_candidate(root: Path) -> int:
 
 
 def candidate_paths(system: str | None = None, home: Path | None = None) -> list[Path]:
-    """Per-OS list of directories worth scoring as a possible Clio Drive root."""
+    """Per-OS list of directories worth scoring as a possible documents root.
+
+    No name-based hints (no specific product/vendor folder names) -- just generic
+    home-folder locations plus every per-OS place an external drive or mount could
+    show up. score_candidate() is what actually decides whether a candidate looks
+    like a <client>/<case-number> tree; this just casts a wide, unopinionated net.
+    """
     system = system or platform.system()
     home = home or Path.home()
     candidates: list[Path] = []
 
     if system == "Windows":
         candidates.extend(Path(f"{letter}:\\") for letter in string.ascii_uppercase)
-        candidates.append(home / "Clio Drive")
-        candidates.append(home / "Clio")
+        candidates.append(home / "Documents")
+        candidates.append(home / "Cases")
     elif system == "Darwin":
         volumes = Path("/Volumes")
         if volumes.is_dir():
             with contextlib.suppress(OSError):
                 for entry in volumes.iterdir():
-                    if _safe_is_dir(entry) and "clio" in entry.name.lower():
+                    if _safe_is_dir(entry):
                         candidates.append(entry)
-        candidates.append(home / "Clio Drive")
-        candidates.append(home / "Clio")
+        candidates.append(home / "Documents")
+        candidates.append(home / "Cases")
     else:
-        candidates.extend(home.glob("Clio*"))
+        candidates.append(home / "Documents")
+        candidates.append(home / "Cases")
         for base in (Path("/mnt"), Path("/media")):
             if base.is_dir():
                 with contextlib.suppress(OSError):

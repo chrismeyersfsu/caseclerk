@@ -96,11 +96,11 @@ async def _run(tmp_path: Path) -> None:
     passed = False
     error_detail: str | None = None
 
-    clio_root = build_fixture_drive(tmp_path / "clio")
+    documents_root = build_fixture_drive(tmp_path / "documents")
     env_overrides = {
         "CASECLERK_CONFIG_DIR": str(tmp_path / "config"),
         "CASECLERK_DATA_DIR": str(tmp_path / "data"),
-        "CASECLERK_CLIO_ROOT": str(clio_root),
+        "CASECLERK_DOCUMENTS_ROOT": str(documents_root),
     }
     caseclerk_bin = _caseclerk_binary()
 
@@ -232,7 +232,7 @@ async def _run(tmp_path: Path) -> None:
             recorder.check("the .eml file exists", eml_path is not None and eml_path.is_file(), str(eml_path))
             recorder.check("the .txt file exists", txt_path is not None and txt_path.is_file(), str(txt_path))
             if eml_path is not None and txt_path is not None:
-                expected_dir = clio_root / DEMO_CLIENT / DEMO_CASE / "emails-generated"
+                expected_dir = documents_root / DEMO_CLIENT / DEMO_CASE / "emails-generated"
                 recorder.check(
                     "both files landed in the fixture case's emails-generated/ folder",
                     eml_path.parent == expected_dir and txt_path.parent == expected_dir,

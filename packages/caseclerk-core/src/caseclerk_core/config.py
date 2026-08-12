@@ -61,7 +61,7 @@ class SummarizationConfig(_CamelModel):
 
 
 class Config(_CamelModel):
-    clio_root: str | None = None
+    documents_root: str | None = None
     emails_folder_name: str = "emails-generated"
     email_file_name_template: str = "{yyyy}-{mm}-{dd}-{slug}"
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
@@ -72,7 +72,7 @@ class Config(_CamelModel):
 
 # env var name -> dotted field path (snake_case, matching model field names)
 _ENV_FIELDS: dict[str, tuple[str, ...]] = {
-    "CASECLERK_CLIO_ROOT": ("clio_root",),
+    "CASECLERK_DOCUMENTS_ROOT": ("documents_root",),
     "CASECLERK_EMAILS_FOLDER_NAME": ("emails_folder_name",),
     "CASECLERK_EMAIL_FILE_NAME_TEMPLATE": ("email_file_name_template",),
     "CASECLERK_PROCESSING_CONCURRENCY": ("processing", "concurrency"),

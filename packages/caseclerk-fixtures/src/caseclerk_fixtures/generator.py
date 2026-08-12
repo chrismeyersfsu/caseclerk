@@ -1,4 +1,4 @@
-"""Synthetic Clio Drive fixture generator: two invented clients, two cases each.
+"""Synthetic documents-drive fixture generator: two invented clients, two cases each.
 
 All content is fabricated for testing; no real names, firms, or client
 data appear anywhere. The demo case (Alvarez, Maria / 2026-0142) carries
@@ -155,7 +155,7 @@ def _write_unsupported(path: Path) -> None:
 
 
 def build_fixture_drive(dest: Path) -> Path:
-    """Build a synthetic Clio Drive tree at dest (creating it if needed) and return dest.
+    """Build a synthetic documents-drive tree at dest (creating it if needed) and return dest.
 
     Deterministic and idempotent: re-running overwrites the same fixed content at the
     same paths, so callers can rebuild freely between test runs.

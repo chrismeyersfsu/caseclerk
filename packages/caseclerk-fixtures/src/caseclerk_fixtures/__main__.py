@@ -1,4 +1,4 @@
-"""`python -m caseclerk_fixtures <dest>` -- build a synthetic Clio Drive at dest.
+"""`python -m caseclerk_fixtures <dest>` -- build a synthetic documents drive at dest.
 
 Dev-only entry point; not part of the MCP server's stdout-sensitive
 stdio path, so plain print() here is fine.
@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m caseclerk_fixtures <dest>", file=sys.stderr)
         return 2
     dest = build_fixture_drive(Path(args[0]))
-    print(f"Built fixture Clio drive at {dest}")
+    print(f"Built fixture documents drive at {dest}")
     return 0
 
 

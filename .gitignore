@@ -11,7 +11,7 @@ build/
 .coverage
 htmlcov/
 
-# Test fixture output (generated Clio drive trees, e2e artifacts)
+# Test fixture output (generated documents-drive trees, e2e artifacts)
 .fixtures/
 tests/e2e/output/
 test-artifacts/

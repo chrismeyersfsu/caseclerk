@@ -29,10 +29,10 @@ def test_config_path_get_set_roundtrip(runner: CliRunner, isolated_env: Path) ->
 
 
 def test_config_set_top_level_string_key(runner: CliRunner, isolated_env: Path) -> None:
-    result = runner.invoke(app, ["config", "set", "clioRoot", "/mnt/clio"])
+    result = runner.invoke(app, ["config", "set", "documentsRoot", "/mnt/documents"])
     assert result.exit_code == 0
-    get_result = runner.invoke(app, ["config", "get", "clioRoot"])
-    assert get_result.output.strip() == "/mnt/clio"
+    get_result = runner.invoke(app, ["config", "get", "documentsRoot"])
+    assert get_result.output.strip() == "/mnt/documents"
 
 
 def test_config_set_bool_key(runner: CliRunner, isolated_env: Path) -> None:

@@ -81,7 +81,7 @@ class ReprocessOut(BaseModel):
 
 class SettingsOut(BaseModel):
     version: str
-    clio_root: str | None
+    documents_root: str | None
     emails_folder_name: str
     email_file_name_template: str
     processing_concurrency: int

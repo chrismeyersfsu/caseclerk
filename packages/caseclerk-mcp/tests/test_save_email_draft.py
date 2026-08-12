@@ -25,7 +25,7 @@ def test_save_email_draft_writes_into_the_configured_emails_folder(env: Env) -> 
     eml_path = Path(payload["eml_path"])
     txt_path = Path(payload["txt_path"])
 
-    expected_dir = env.clio_root / "Alvarez, Maria" / "2026-0142" / "emails-generated"
+    expected_dir = env.documents_root / "Alvarez, Maria" / "2026-0142" / "emails-generated"
     assert eml_path.parent == expected_dir
     assert txt_path.parent == expected_dir
     assert eml_path.exists()
@@ -64,8 +64,8 @@ def test_save_email_draft_never_overwrites(env: Env) -> None:
 def test_save_email_draft_respects_configured_folder_name_and_template(
     make_env: Callable[..., Env],
 ) -> None:
-    # clio_root is intentionally left unset here: make_env() always passes its own
-    # temp clio_root explicitly to build_server(), which takes precedence over config.
+    # documents_root is intentionally left unset here: make_env() always passes its own
+    # temp documents_root explicitly to build_server(), which takes precedence over config.
     cfg = Config(emails_folder_name="drafts", email_file_name_template="{case}-{slug}")
     custom_env = make_env(config=cfg)
     custom_env.seed_case("Barrett Holdings LLC", "2026-0201")

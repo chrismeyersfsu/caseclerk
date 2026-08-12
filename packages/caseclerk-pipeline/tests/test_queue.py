@@ -53,7 +53,7 @@ def _seed_pending_document(conn: sqlite3.Connection, case_id: int, case_dir: Pat
 def _make_case(conn: sqlite3.Connection, tmp_path: Path) -> tuple[int, Path]:
     client_id = db.upsert_client(conn, "Alvarez, Maria")
     case_id = db.upsert_case(conn, client_id, "2026-0142", "Alvarez, Maria/2026-0142")
-    case_dir = tmp_path / "clio" / "Alvarez, Maria" / "2026-0142"
+    case_dir = tmp_path / "documents" / "Alvarez, Maria" / "2026-0142"
     case_dir.mkdir(parents=True)
     return case_id, case_dir
 

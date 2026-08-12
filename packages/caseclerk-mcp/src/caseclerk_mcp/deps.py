@@ -19,7 +19,7 @@ from caseclerk_core.paths import safe_join
 @dataclass(frozen=True)
 class Deps:
     config: Config
-    clio_root: Path | None
+    documents_root: Path | None
     prompts_dir: Path
     db_path: Path | None = None
 
@@ -27,6 +27,6 @@ class Deps:
         return db.connect(self.db_path)
 
     def case_directory(self, client: str, case_number: str) -> Path:
-        if self.clio_root is None:
-            raise ValueError("clioRoot is not configured; run `caseclerk init` first")
-        return safe_join(self.clio_root, client, case_number)
+        if self.documents_root is None:
+            raise ValueError("documentsRoot is not configured; run `caseclerk init` first")
+        return safe_join(self.documents_root, client, case_number)

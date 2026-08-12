@@ -28,7 +28,7 @@ def _deescape(text: str) -> str:
 
 
 def test_build_fixture_drive_creates_the_expected_tree(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     expected = {
         f"{DEMO_CLIENT}/{DEMO_CASE}/deposition-transcript.docx",
         f"{DEMO_CLIENT}/{DEMO_CASE}/security-report.pdf",
@@ -58,7 +58,7 @@ def test_build_fixture_drive_is_deterministic(tmp_path: Path) -> None:
 
 
 def test_build_fixture_drive_is_idempotent_on_rebuild(tmp_path: Path) -> None:
-    dest = tmp_path / "clio"
+    dest = tmp_path / "documents"
     build_fixture_drive(dest)
     before = (dest / DEMO_CLIENT / DEMO_CASE / "client-intake-notes.txt").read_bytes()
     build_fixture_drive(dest)
@@ -67,7 +67,7 @@ def test_build_fixture_drive_is_idempotent_on_rebuild(tmp_path: Path) -> None:
 
 
 def test_deposition_transcript_contains_the_april_21_conflict(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / DEMO_CASE / "deposition-transcript.docx"
 
     markdown = _deescape(extract_docx(path))
@@ -77,7 +77,7 @@ def test_deposition_transcript_contains_the_april_21_conflict(tmp_path: Path) ->
 
 
 def test_security_report_places_opposing_party_in_clearwater_same_day(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / DEMO_CASE / "security-report.pdf"
 
     text = _deescape(extract_pdf(path))
@@ -87,7 +87,7 @@ def test_security_report_places_opposing_party_in_clearwater_same_day(tmp_path: 
 
 
 def test_correspondence_contains_opposing_counsel_contact(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / DEMO_CASE / "correspondence-with-opposing-counsel.docx"
 
     markdown = _deescape(extract_docx(path))
@@ -95,7 +95,7 @@ def test_correspondence_contains_opposing_counsel_contact(tmp_path: Path) -> Non
 
 
 def test_scanned_exhibit_needs_ocr(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / DEMO_CASE / "scanned-exhibit.pdf"
     try:
         extract_pdf(path)
@@ -106,21 +106,21 @@ def test_scanned_exhibit_needs_ocr(tmp_path: Path) -> None:
 
 
 def test_unsupported_file_extension_is_flagged(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / DEMO_CASE / "old-invoice.xlsx"
     assert path.exists()
     assert is_unsupported(path.suffix)
 
 
 def test_second_alvarez_case_docx_extracts_cleanly(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / DEMO_CLIENT / SECOND_ALVAREZ_CASE / "retainer-agreement.docx"
     markdown = extract_docx(path)
     assert markdown.strip()
 
 
 def test_barrett_case_pdf_extracts_cleanly(tmp_path: Path) -> None:
-    dest = build_fixture_drive(tmp_path / "clio")
+    dest = build_fixture_drive(tmp_path / "documents")
     path = dest / OTHER_CLIENT / OTHER_CLIENT_CASE_1 / "inspection-report.pdf"
     text = extract_pdf(path)
     assert "inspection" in text.lower() or "Inspection" in text

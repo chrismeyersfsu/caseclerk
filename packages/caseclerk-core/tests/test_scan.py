@@ -24,11 +24,11 @@ def _write(path: Path, text: str) -> None:
 def test_scan_discovers_new_documents_and_skips_emails_folder(
     tmp_path: Path, conn: sqlite3.Connection
 ) -> None:
-    clio = tmp_path / "clio"
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "letter.txt", "hello")
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "emails-generated" / "ignored.eml", "skip me")
+    documents = tmp_path / "documents"
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "letter.txt", "hello")
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "emails-generated" / "ignored.eml", "skip me")
 
-    result = scan.scan(conn, clio)
+    result = scan.scan(conn, documents)
     assert result.clients_seen == 1
     assert result.cases_seen == 1
     assert result.documents_new == 1
@@ -41,9 +41,9 @@ def test_scan_discovers_new_documents_and_skips_emails_folder(
 
 
 def test_scan_enqueues_a_job_for_new_documents(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "letter.txt", "hello")
-    scan.scan(conn, clio)
+    documents = tmp_path / "documents"
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "letter.txt", "hello")
+    scan.scan(conn, documents)
 
     job = db.claim_job(conn, "worker-1")
     assert job is not None
@@ -51,10 +51,10 @@ def test_scan_enqueues_a_job_for_new_documents(tmp_path: Path, conn: sqlite3.Con
 
 
 def test_scan_ignores_a_noop_touch(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    path = clio / "Alvarez, Maria" / "2026-0142" / "letter.txt"
+    documents = tmp_path / "documents"
+    path = documents / "Alvarez, Maria" / "2026-0142" / "letter.txt"
     _write(path, "hello")
-    scan.scan(conn, clio)
+    scan.scan(conn, documents)
 
     case_id = db.resolve_case_id(conn, "Alvarez, Maria", "2026-0142")
     assert case_id is not None
@@ -64,7 +64,7 @@ def test_scan_ignores_a_noop_touch(tmp_path: Path, conn: sqlite3.Connection) -> 
     stat = path.stat()
     os.utime(path, (stat.st_atime, stat.st_mtime + 5))  # touch without content change
 
-    result = scan.scan(conn, clio)
+    result = scan.scan(conn, documents)
     assert result.documents_unchanged == 1
     assert result.documents_changed == 0
     after = db.get_document(conn, doc.id)
@@ -73,10 +73,10 @@ def test_scan_ignores_a_noop_touch(tmp_path: Path, conn: sqlite3.Connection) -> 
 
 
 def test_scan_detects_real_content_change(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    path = clio / "Alvarez, Maria" / "2026-0142" / "letter.txt"
+    documents = tmp_path / "documents"
+    path = documents / "Alvarez, Maria" / "2026-0142" / "letter.txt"
     _write(path, "hello")
-    scan.scan(conn, clio)
+    scan.scan(conn, documents)
 
     case_id = db.resolve_case_id(conn, "Alvarez, Maria", "2026-0142")
     assert case_id is not None
@@ -87,7 +87,7 @@ def test_scan_detects_real_content_change(tmp_path: Path, conn: sqlite3.Connecti
     _write(path, "hello, changed")
     os.utime(path, (stat.st_atime, stat.st_mtime + 5))
 
-    result = scan.scan(conn, clio)
+    result = scan.scan(conn, documents)
     assert result.documents_changed == 1
     after = db.get_document(conn, doc.id)
     assert after is not None
@@ -95,27 +95,27 @@ def test_scan_detects_real_content_change(tmp_path: Path, conn: sqlite3.Connecti
 
 
 def test_scan_deletes_vanished_documents(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    path = clio / "Alvarez, Maria" / "2026-0142" / "letter.txt"
+    documents = tmp_path / "documents"
+    path = documents / "Alvarez, Maria" / "2026-0142" / "letter.txt"
     _write(path, "hello")
-    scan.scan(conn, clio)
+    scan.scan(conn, documents)
 
     case_id = db.resolve_case_id(conn, "Alvarez, Maria", "2026-0142")
     assert case_id is not None
     assert len(db.list_documents(conn, case_id)) == 1
 
     path.unlink()
-    result = scan.scan(conn, clio)
+    result = scan.scan(conn, documents)
     assert result.documents_removed == 1
     assert db.list_documents(conn, case_id) == []
 
 
 def test_scan_respects_configured_ignore_globs(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "keep.txt", "keep me")
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "scratch.tmp", "throwaway")
+    documents = tmp_path / "documents"
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "keep.txt", "keep me")
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "scratch.tmp", "throwaway")
 
-    scan.scan(conn, clio, ignore_globs=["*.tmp"])
+    scan.scan(conn, documents, ignore_globs=["*.tmp"])
 
     case_id = db.resolve_case_id(conn, "Alvarez, Maria", "2026-0142")
     assert case_id is not None
@@ -124,13 +124,13 @@ def test_scan_respects_configured_ignore_globs(tmp_path: Path, conn: sqlite3.Con
 
 
 def test_scan_skips_hidden_dirs_and_files(tmp_path: Path, conn: sqlite3.Connection) -> None:
-    clio = tmp_path / "clio"
-    _write(clio / "Alvarez, Maria" / "2026-0142" / "keep.txt", "keep me")
-    _write(clio / "Alvarez, Maria" / "2026-0142" / ".DS_Store", "junk")
-    _write(clio / "Alvarez, Maria" / "2026-0142" / ".hidden" / "nested.txt", "junk")
-    _write(clio / ".git" / "config", "junk")
+    documents = tmp_path / "documents"
+    _write(documents / "Alvarez, Maria" / "2026-0142" / "keep.txt", "keep me")
+    _write(documents / "Alvarez, Maria" / "2026-0142" / ".DS_Store", "junk")
+    _write(documents / "Alvarez, Maria" / "2026-0142" / ".hidden" / "nested.txt", "junk")
+    _write(documents / ".git" / "config", "junk")
 
-    scan.scan(conn, clio)
+    scan.scan(conn, documents)
 
     assert db.list_clients(conn) == ["Alvarez, Maria"]
     case_id = db.resolve_case_id(conn, "Alvarez, Maria", "2026-0142")

@@ -18,7 +18,7 @@ from caseclerk_mcp.server import build_server
 @dataclass
 class Env:
     tmp_path: Path
-    clio_root: Path
+    documents_root: Path
     db_path: Path
     server: MCPServer[None]
 
@@ -42,7 +42,7 @@ class Env:
         try:
             client_id = db.upsert_client(conn, client)
             case_id = db.upsert_case(conn, client_id, case_number, f"{client}/{case_number}")
-            case_dir = self.clio_root / client / case_number
+            case_dir = self.documents_root / client / case_number
             case_dir.mkdir(parents=True, exist_ok=True)
             doc_ids = []
             for rel_path, text in documents:
@@ -68,12 +68,14 @@ class Env:
 @pytest.fixture
 def make_env(tmp_path: Path) -> Callable[..., Env]:
     def _make(*, config: Config | None = None, run_startup_scan: bool = False) -> Env:
-        clio_root = tmp_path / "clio"
-        clio_root.mkdir(parents=True, exist_ok=True)
+        documents_root = tmp_path / "documents"
+        documents_root.mkdir(parents=True, exist_ok=True)
         db_path = tmp_path / "caseclerk.db"
-        cfg = config or Config(clio_root=str(clio_root))
-        server = build_server(cfg, clio_root=clio_root, db_path=db_path, run_startup_scan=run_startup_scan)
-        return Env(tmp_path=tmp_path, clio_root=clio_root, db_path=db_path, server=server)
+        cfg = config or Config(documents_root=str(documents_root))
+        server = build_server(
+            cfg, documents_root=documents_root, db_path=db_path, run_startup_scan=run_startup_scan
+        )
+        return Env(tmp_path=tmp_path, documents_root=documents_root, db_path=db_path, server=server)
 
     return _make
 

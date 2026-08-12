@@ -48,12 +48,12 @@ def _root(
     """CaseClerk: a case-files MCP server for a small law firm."""
 
 
-def _make_case_dir_resolver(conn: sqlite3.Connection, clio_root: Path) -> Callable[[int], Path]:
+def _make_case_dir_resolver(conn: sqlite3.Connection, documents_root: Path) -> Callable[[int], Path]:
     def _resolve(case_id: int) -> Path:
         case = db.get_case(conn, case_id)
         if case is None:
             raise PathContainmentError(f"unknown case_id {case_id}")
-        return safe_join(clio_root, case.rel_path)
+        return safe_join(documents_root, case.rel_path)
 
     return _resolve
 
@@ -76,11 +76,12 @@ def init(
         False, "--write-claude-config", help="Write the Claude Desktop MCP server entry without prompting."
     ),
 ) -> None:
-    """Discover the Clio Drive root, write config.json, and print MCP client setup lines."""
+    """Discover the documents root, write config.json, and print MCP client setup lines."""
     candidates = discover()
     if not candidates:
         typer.echo(
-            "No Clio Drive candidates found. Set it manually: caseclerk config set clioRoot <path>", err=True
+            "No documents-root candidates found. Set it manually: caseclerk config set documentsRoot <path>",
+            err=True,
         )
         raise typer.Exit(code=1)
 
@@ -89,10 +90,10 @@ def init(
         typer.echo(f"  {candidate.path}  (score {candidate.score})")
 
     chosen = candidates[0].path
-    if not yes and not typer.confirm(f"Use '{chosen}' as clioRoot?", default=True):
+    if not yes and not typer.confirm(f"Use '{chosen}' as documentsRoot?", default=True):
         raise typer.Exit(code=1)
 
-    cfg = load_config().model_copy(update={"clio_root": str(chosen)})
+    cfg = load_config().model_copy(update={"documents_root": str(chosen)})
     saved_path = save_config(cfg)
     typer.echo(f"Wrote config to {saved_path}")
 
@@ -116,12 +117,12 @@ def process(
         None, "--concurrency", help="Override processing.concurrency for this run."
     ),
 ) -> None:
-    """Scan clioRoot for new/changed documents and drain the processing queue once."""
+    """Scan documentsRoot for new/changed documents and drain the processing queue once."""
     cfg = load_config()
-    if not cfg.clio_root:
-        typer.echo("clioRoot is not configured. Run `caseclerk init` first.", err=True)
+    if not cfg.documents_root:
+        typer.echo("documentsRoot is not configured. Run `caseclerk init` first.", err=True)
         raise typer.Exit(code=1)
-    root = Path(cfg.clio_root)
+    root = Path(cfg.documents_root)
 
     conn = db.connect()
     try:
@@ -229,7 +230,7 @@ def update() -> None:
 
 @app.command()
 def doctor() -> None:
-    """Check FTS5 availability, uv on PATH, config validity, clioRoot, and db writability."""
+    """Check FTS5 availability, uv on PATH, config validity, documentsRoot, and db writability."""
     healthy = True
 
     try:
@@ -256,11 +257,11 @@ def doctor() -> None:
         typer.echo(f"[FAIL] config is invalid: {exc}")
 
     if cfg is not None:
-        if cfg.clio_root and Path(cfg.clio_root).is_dir():
-            typer.echo(f"[ok]   clioRoot exists: {cfg.clio_root}")
+        if cfg.documents_root and Path(cfg.documents_root).is_dir():
+            typer.echo(f"[ok]   documentsRoot exists: {cfg.documents_root}")
         else:
             healthy = False
-            typer.echo(f"[FAIL] clioRoot is not set or not a directory: {cfg.clio_root!r}")
+            typer.echo(f"[FAIL] documentsRoot is not set or not a directory: {cfg.documents_root!r}")
 
     try:
         conn = db.connect()
