@@ -13,13 +13,17 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
+from pydantic import AnyHttpUrl
 
 from caseclerk_core import db, scan
 from caseclerk_core.config import Config, load_config
 from caseclerk_core.paths import PathContainmentError, safe_join
 from caseclerk_core.update import current_version
+from caseclerk_mcp.audit import AuditMiddleware
 from caseclerk_mcp.deps import Deps
+from caseclerk_mcp.oauth import OAUTH_SCOPE, CaseClerkOAuthProvider
 from caseclerk_mcp.prompts import register_prompts, resolve_prompts_dir
 from caseclerk_mcp.tools.admin import register_admin_tools
 from caseclerk_mcp.tools.browse import register_browse_tools
@@ -88,24 +92,59 @@ def _make_lifespan(
     return _lifespan
 
 
+def _resource_base_url(cfg: Config, *, port: int) -> AnyHttpUrl:
+    """The MCP server's own canonical URL: the OAuth issuer AND resource_server_url (this
+    process is both the resource server and its own minimal authorization server). Prefers
+    the public tunnel hostname; falls back to a local http:// URL for dev/testing when no
+    hostname is configured yet."""
+    if cfg.share.hostname:
+        return AnyHttpUrl(f"https://{cfg.share.hostname}/")
+    return AnyHttpUrl(f"http://127.0.0.1:{port}/")
+
+
 def build_server(
     config: Config | None = None,
     *,
     documents_root: Path | str | None = None,
     db_path: Path | None = None,
     run_startup_scan: bool = True,
+    http_auth: bool = False,
+    http_port: int | None = None,
 ) -> MCPServer[None]:
-    """Construct the caseclerk MCPServer with every tool and the draft-email prompt registered."""
+    """Construct the caseclerk MCPServer with every tool and the draft-email prompt registered.
+
+    http_auth=True adds the OAuth authorization/resource server and the audit-log
+    middleware -- used only for the HTTP transport; stdio (the default) has neither.
+    http_port is the actual port the HTTP transport will bind (falls back to
+    cfg.share.port if not given); it must match the real bound port exactly, since it
+    feeds the OAuth issuer/resource URL whenever no public hostname is configured yet.
+    """
     cfg = config or load_config()
     root_str = str(documents_root) if documents_root is not None else cfg.documents_root
     root = Path(root_str) if root_str else None
     deps = Deps(config=cfg, documents_root=root, prompts_dir=resolve_prompts_dir(cfg), db_path=db_path)
+
+    extra_kwargs: dict[str, object] = {}
+    if http_auth:
+        base_url = _resource_base_url(cfg, port=http_port if http_port is not None else cfg.share.port)
+        extra_kwargs["middleware"] = [AuditMiddleware(db_path=db_path)]
+        extra_kwargs["auth_server_provider"] = CaseClerkOAuthProvider(db_path=db_path)
+        extra_kwargs["auth"] = AuthSettings(
+            issuer_url=base_url,
+            resource_server_url=base_url,
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True, default_scopes=[OAUTH_SCOPE], valid_scopes=[OAUTH_SCOPE]
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+            required_scopes=[OAUTH_SCOPE],
+        )
 
     server: MCPServer[None] = MCPServer(
         SERVER_NAME,
         instructions=INSTRUCTIONS,
         version=current_version(),
         lifespan=_make_lifespan(deps, run_startup_scan=run_startup_scan),
+        **extra_kwargs,  # type: ignore[arg-type]
     )
 
     register_browse_tools(server, deps)
@@ -122,3 +161,13 @@ def serve(config: Config | None = None) -> None:
     """Entry point for `caseclerk serve`: run the stdio server until the client disconnects."""
     server = build_server(config)
     server.run(transport="stdio")
+
+
+def serve_http(config: Config | None = None, *, port: int | None = None) -> None:
+    """Entry point for `caseclerk serve --transport http`: streamable HTTP, bound to
+    127.0.0.1 ONLY -- there is no host parameter, deliberately; a cloudflared tunnel
+    (`caseclerk share start`) is the only supported way to expose this beyond localhost."""
+    cfg = config or load_config()
+    effective_port = port if port is not None else cfg.share.port
+    server = build_server(cfg, http_auth=True, http_port=effective_port)
+    server.run(transport="streamable-http", host="127.0.0.1", port=effective_port)
