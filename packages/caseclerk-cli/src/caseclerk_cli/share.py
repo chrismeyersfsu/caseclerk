@@ -73,8 +73,12 @@ def _is_alive(pid: object) -> bool:
     # invocations, so by the time `stop` runs the child has long since been reparented
     # to init, which reaps it. Tests invoke both in one process, where we ARE still the
     # parent; without reaping, a dead-but-unwaited child keeps answering kill(pid, 0).
-    with contextlib.suppress(ChildProcessError, OSError, AttributeError):
-        os.waitpid(pid, os.WNOHANG)
+    # os.WNOHANG doesn't exist in Windows' typeshed stub at all (not just at runtime),
+    # so this is a getattr, not a plain attribute access -- and skipped entirely there.
+    wnohang = getattr(os, "WNOHANG", None)
+    if wnohang is not None:
+        with contextlib.suppress(ChildProcessError, OSError):
+            os.waitpid(pid, wnohang)
     try:
         os.kill(pid, 0)
     except OSError:
@@ -107,9 +111,10 @@ def _terminate(pid: object) -> bool:
             return True
         time.sleep(0.2)
 
-    if hasattr(signal, "SIGKILL"):  # POSIX only; Windows SIGTERM already force-kills
+    sigkill = getattr(signal, "SIGKILL", None)  # POSIX only; Windows SIGTERM already force-kills
+    if sigkill is not None:
         with contextlib.suppress(OSError):
-            os.kill(pid, signal.SIGKILL)
+            os.kill(pid, sigkill)
         time.sleep(0.2)
     return not _is_alive(pid)
 
