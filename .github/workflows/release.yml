@@ -1,0 +1,83 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  verify-core:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-core
+
+  verify-pipeline:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-pipeline
+
+  verify-artifacts:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-artifacts
+
+  verify-mcp:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-mcp
+
+  verify-cli:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-cli
+
+  verify-fixtures:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-fixtures
+
+  verify-e2e:
+    uses: ./.github/workflows/e2e.yml
+
+  publish:
+    needs:
+      - verify-core
+      - verify-pipeline
+      - verify-artifacts
+      - verify-mcp
+      - verify-cli
+      - verify-fixtures
+      - verify-e2e
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Build wheels + sdists
+        run: uv build --all-packages
+
+      - name: Download the ubuntu e2e report
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-report-ubuntu-latest
+          path: e2e-report
+
+      - name: Zip the e2e report
+        run: zip -r e2e-report.zip e2e-report
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* e2e-report.zip --generate-notes
