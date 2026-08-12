@@ -79,13 +79,17 @@ jobs:
           Write-Host $doctorOutput
           # exit code 1 is expected here (no documentsRoot in a fresh smoke-test env);
           # what this proves is that the frozen build actually starts and runs a real
-          # command end to end, not that every check passes.
+          # command end to end, not that every check passes. GitHub Actions' pwsh
+          # step wrapper fails the step if $LASTEXITCODE is nonzero when the script
+          # ends, regardless of whether our own checks below threw -- doctor's
+          # expected exit 1 would otherwise fail this step for the "right" reason.
           if ($doctorOutput -notmatch "running as a packaged binary") {
             throw "doctor did not report packaged-binary status:`n$doctorOutput"
           }
           if ($doctorOutput -match "Traceback") {
             throw "doctor crashed:`n$doctorOutput"
           }
+          $global:LASTEXITCODE = 0
 
       - name: Upload Windows package artifact
         uses: actions/upload-artifact@v4
