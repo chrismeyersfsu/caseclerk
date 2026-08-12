@@ -61,9 +61,11 @@ CaseClerk speaks plain MCP over stdio — the command any host needs is `casecle
 | `caseclerk retry <document_id>` / `caseclerk retry --all-failed` | Requeue a document, or every failed document |
 | `caseclerk config path` / `get <key>` / `set <key> <value>` | Read or update `config.json` by dotted camelCase key (e.g. `processing.concurrency`) |
 | `caseclerk update` | Check GitHub Releases and apply an update on the spot if one is available |
-| `caseclerk doctor` | Verify SQLite has FTS5, `uv` is on `PATH`, config is valid, `documentsRoot` exists, the db is writable (and `cloudflared`, if `share` is configured) |
+| `caseclerk doctor` | Verify SQLite has FTS5, `uv` is on `PATH` (or that this is a packaged binary, which needs no `uv`), config is valid, `documentsRoot` exists, the db is writable, and (if `share` is configured) cloudflared's source + version |
 | `caseclerk serve --transport http [--port N]` | Run the MCP server over streamable HTTP instead of stdio, bound to `127.0.0.1` only (no `--host` flag exists) |
+| `caseclerk share setup` | Resolve or download a managed cloudflared binary (no install/PATH/admin needed) without starting anything |
 | `caseclerk share start` / `stop` / `status` | Start or stop the HTTP transport + a cloudflared tunnel as detached processes (for ChatGPT); show whether it's running, the public URL, and recent audit entries |
+| `caseclerk share shortcuts` | Create Desktop shortcuts that toggle sharing on/off with a double-click (Windows only) |
 | `caseclerk audit [--limit N]` | Show the most recent HTTP-transport tool calls (stdio never writes these) |
 
 During development, run any of these as `uv run caseclerk <command>` from the repo root instead of installing.
@@ -148,28 +150,39 @@ Once installed, `caseclerk serve` and `caseclerk status` check GitHub Releases f
 
 Claude Desktop and Claude Code run CaseClerk locally over stdio — nothing is ever exposed to the network. ChatGPT's custom connectors, by contrast, connect from OpenAI's cloud, so they need an internet-reachable HTTPS URL. CaseClerk supports this with a streamable-HTTP transport, protected by an embedded OAuth 2.1 authorization server, exposed only through an outbound-only [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/) you bring up deliberately.
 
+CaseClerk manages its own cloudflared binary — there's nothing to separately install. `caseclerk share setup` resolves one (a copy bundled with a packaged build, a previously downloaded copy, or a pinned, checksum-verified download from cloudflare/cloudflared's GitHub releases, in that order) into CaseClerk's own data directory; it never touches `PATH` and never needs admin.
+
 ### One-time setup (done once, by whoever administers the install)
 
-1. **Install cloudflared** and log in to your Cloudflare account:
+1. **Fetch cloudflared and log in to your Cloudflare account:**
    ```sh
-   cloudflared tunnel login
+   caseclerk share setup   # downloads/resolves cloudflared, prints its path
+   ```
+   Use the printed path to run the one-time Cloudflare login (opens a browser):
+   ```sh
+   <path from share setup> tunnel login
    ```
 2. **Create a named tunnel** and note the hostname you want to use (a subdomain of a domain already in your Cloudflare account):
    ```sh
-   cloudflared tunnel create caseclerk
-   cloudflared tunnel route dns caseclerk caseclerk.yourdomain.com
+   <path from share setup> tunnel create caseclerk
+   <path from share setup> tunnel route dns caseclerk caseclerk.yourdomain.com
    ```
    That's it for cloudflared configuration — CaseClerk runs the tunnel with `cloudflared tunnel run --url http://127.0.0.1:<port> <tunnelName>`, so no `config.yml`/ingress file is needed.
 3. **Point CaseClerk at it:**
    ```sh
    caseclerk config set share.hostname caseclerk.yourdomain.com
-   caseclerk doctor    # confirms cloudflared is on PATH now that share is configured
+   caseclerk doctor    # confirms cloudflared is ready now that share is configured
    ```
 4. **Start it and add the connector in ChatGPT:**
    ```sh
    caseclerk share start
    ```
    This prints the public URL (`https://caseclerk.yourdomain.com/mcp`). In ChatGPT: **Settings → Apps & Connectors → Advanced settings → Developer mode**, then create a connector with that URL and **OAuth** authentication. ChatGPT registers itself automatically (dynamic client registration) and completes an authorization-code + PKCE exchange against CaseClerk's own embedded authorization server — there's no login screen to click through on CaseClerk's side; the security boundary is the tunnel itself being off by default.
+5. **(Optional, Windows only) Create toggle shortcuts:**
+   ```sh
+   caseclerk share shortcuts
+   ```
+   Drops "CaseClerk Sharing ON.lnk" / "CaseClerk Sharing OFF.lnk" on the Desktop, each running `share start`/`share stop` with a double-click — the day-to-day interface for a non-technical user (see below).
 
 ### Day to day
 
@@ -180,7 +193,7 @@ caseclerk share stop     # tears both down
 caseclerk audit          # the full remote-request audit log, any time
 ```
 
-A desktop shortcut that runs `caseclerk share start` (and another for `stop`) is enough for day-to-day use — no terminal required once the one-time setup above is done.
+The "CaseClerk Sharing ON/OFF" Desktop shortcuts from step 5 above cover the same two commands with a double-click — no terminal required once the one-time setup is done.
 
 ### Security posture
 
@@ -190,6 +203,23 @@ A desktop shortcut that runs `caseclerk share start` (and another for `stop`) is
 - **OAuth on every request.** Every tool call over HTTP requires a valid bearer token issued through the authorization-code + PKCE flow; a missing or invalid token gets a 401 with `WWW-Authenticate` before any tool code runs.
 - **Audit trail.** Every HTTP-transport tool call (tool name, arguments summary, success/failure) is logged to the same SQLite db, readable via `caseclerk audit` or `caseclerk share status`. stdio never writes to this log.
 
+### Installing on the attorney's machine
+
+The attorney's daily driver is the ChatGPT app, not Claude Desktop, so his machine doesn't need Python, uv, or a terminal habit — just the packaged Windows build, installed once by whoever administers CaseClerk:
+
+1. **Download and unzip.** Grab `caseclerk-windows-x64.zip` from the [latest release](https://github.com/chrismeyersfsu/caseclerk/releases/latest) and extract it anywhere (e.g. `C:\Users\<name>\CaseClerk\`). The folder is self-contained — `caseclerk.exe` plus everything it needs; nothing else to install.
+2. **Open a terminal in that folder** (Shift+right-click → "Open PowerShell window here", or `cd` to it) and run the one-time setup:
+   ```powershell
+   .\caseclerk.exe init --yes
+   .\caseclerk.exe share setup
+   ```
+   Then follow the "One-time setup" steps above (cloudflared login/tunnel/DNS, `share.hostname`, `share start`, the ChatGPT connector) using `.\caseclerk.exe` in place of `caseclerk`.
+3. **Create the toggle shortcuts** so day-to-day use never needs a terminal:
+   ```powershell
+   .\caseclerk.exe share shortcuts
+   ```
+4. **Auto-update.** `caseclerk.exe` knows it's a packaged binary (`caseclerk.exe doctor` reports "running as a packaged binary" rather than checking for `uv`) and updates itself accordingly: `caseclerk update` downloads the new release's zip and swaps it into the same folder in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in, and a leftover-cleanup pass runs at every startup. Nothing to reinstall or re-unzip; just restart `caseclerk.exe` (or a running `share start`) afterward to pick it up. If a swap ever fails (e.g. offline), the command prints the release page URL as a manual fallback instead of leaving a half-updated install.
+
 ## Roadmap
 
-A standalone, PyInstaller-built binary (no Python/uv install required) for a non-technical daily user's machine, plus a one-click desktop shortcut that toggles `share start`/`stop`, is planned but not yet built.
+Everything in the plan is built. Ideas for later: summarization via a configured endpoint, a cross-case `search_client` tool, `.msg`/`.eml`/`.rtf`/`.xlsx` extractors, and an LLM-in-the-loop e2e workflow.
