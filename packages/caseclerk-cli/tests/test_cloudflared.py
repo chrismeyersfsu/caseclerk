@@ -142,6 +142,12 @@ def test_download_verifies_checksum_and_caches_plain_binary(
 
 
 def test_download_extracts_tgz_asset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real OS running this test, captured *before* sys.platform gets
+    # monkeypatched below to force cloudflared's darwin/.tgz code path --
+    # os.chmod's actual effect on a file is governed by the real OS, not by
+    # what the code under test believes sys.platform is, so the exec-bit
+    # assertion further down must gate on this, not the monkeypatched value.
+    real_platform = sys.platform
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(platform_module, "machine", lambda: "arm64")
     binary_contents = b"fake darwin cloudflared binary"
@@ -157,7 +163,7 @@ def test_download_extracts_tgz_asset(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert result == cloudflared._cached_path()
     assert result.read_bytes() == binary_contents
-    if sys.platform != "win32":
+    if real_platform != "win32":
         assert result.stat().st_mode & stat.S_IEXEC
 
 
@@ -216,12 +222,15 @@ def test_resolve_downloads_when_nothing_cached_or_bundled(monkeypatch: pytest.Mo
     assert result.read_bytes() == contents
 
 
-def test_installed_version_runs_the_binary(tmp_path: Path) -> None:
-    script = tmp_path / "fake_cloudflared"
-    script.write_text("#!/usr/bin/env python3\nprint('cloudflared version 2026.7.3')\n")
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-
-    assert cloudflared.installed_version(script) == "cloudflared version 2026.7.3"
+def test_installed_version_runs_the_binary() -> None:
+    # sys.executable is a real, directly-executable binary on every platform,
+    # unlike a hand-written POSIX shebang script (Windows' CreateProcess can't
+    # launch those directly -- "not a valid Win32 application"). This proves
+    # installed_version() runs the given binary and captures its output,
+    # regardless of what a real cloudflared binary's own output looks like.
+    output = cloudflared.installed_version(Path(sys.executable))
+    assert output is not None
+    assert "Python" in output or "python" in output.lower()
 
 
 def test_installed_version_none_on_missing_binary(tmp_path: Path) -> None:

@@ -32,9 +32,13 @@ def test_is_frozen_reflects_sys_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
     assert binary_update.is_frozen() is True
 
 
-def test_install_dir_is_executable_parent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "executable", "/some/dir/caseclerk.exe")
-    assert binary_update.install_dir() == Path("/some/dir")
+def test_install_dir_is_executable_parent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # install_dir() resolves the path (fills in a drive letter on Windows, etc.),
+    # so compare against an equally-resolved tmp_path rather than a hand-written
+    # POSIX-style string, which would only round-trip unchanged on POSIX.
+    exe_path = tmp_path / "caseclerk.exe"
+    monkeypatch.setattr(sys, "executable", str(exe_path))
+    assert binary_update.install_dir() == tmp_path.resolve()
 
 
 def test_release_asset_name_windows_only(monkeypatch: pytest.MonkeyPatch) -> None:

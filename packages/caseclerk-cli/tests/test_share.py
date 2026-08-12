@@ -73,9 +73,11 @@ def test_share_start_reports_cloudflared_resolution_failure(
 def test_share_setup_reports_the_resolved_binary(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
-    )
+    # A real Path built from isolated_env, not a hand-written POSIX string --
+    # str(Path("/usr/bin/x")) renders with backslashes on Windows, which would
+    # never match a forward-slash substring check below.
+    binary_path = isolated_env / "cloudflared"
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", lambda **kwargs: binary_path)
     monkeypatch.setattr(
         share_module.cloudflared_module, "installed_version", lambda _path: "cloudflared 1.2.3"
     )
@@ -85,7 +87,7 @@ def test_share_setup_reports_the_resolved_binary(
     assert result.exit_code == 0
     assert "downloaded" in result.output
     assert "cloudflared 1.2.3" in result.output
-    assert "/usr/bin/cloudflared" in result.output
+    assert str(binary_path) in result.output
 
 
 def test_share_setup_reports_failure(
