@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "The caseclerk console script: serve, init, process, status, and admin commands."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]

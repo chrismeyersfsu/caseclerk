@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Config, database, discovery, and path-containment core for CaseClerk."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]
