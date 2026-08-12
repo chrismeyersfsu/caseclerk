@@ -102,6 +102,17 @@ class ProcessingFailure(_Base):
     attempts: int
 
 
+class RemoteRequest(_Base):
+    """One audited tool call made over the HTTP transport. stdio never writes these."""
+
+    id: int
+    ts: datetime
+    tool: str
+    args_summary: str | None = None
+    ok: bool
+    error: str | None = None
+
+
 class ProcessingStatus(_Base):
     total: int
     by_state: dict[DocumentState, int]

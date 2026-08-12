@@ -60,6 +60,14 @@ class SummarizationConfig(_CamelModel):
     model: str = ""
 
 
+class ShareConfig(_CamelModel):
+    """Remote access over HTTP + a cloudflared named tunnel; see `caseclerk share`."""
+
+    hostname: str | None = None
+    port: int = 8787
+    tunnel_name: str = "caseclerk"
+
+
 class Config(_CamelModel):
     documents_root: str | None = None
     emails_folder_name: str = "emails-generated"
@@ -67,6 +75,7 @@ class Config(_CamelModel):
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     updates: UpdatesConfig = Field(default_factory=UpdatesConfig)
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig)
+    share: ShareConfig = Field(default_factory=ShareConfig)
     prompts_dir: str | None = None
 
 
@@ -85,6 +94,9 @@ _ENV_FIELDS: dict[str, tuple[str, ...]] = {
     "CASECLERK_SUMMARIZATION_BASE_URL": ("summarization", "base_url"),
     "CASECLERK_SUMMARIZATION_API_KEY_ENV": ("summarization", "api_key_env"),
     "CASECLERK_SUMMARIZATION_MODEL": ("summarization", "model"),
+    "CASECLERK_SHARE_HOSTNAME": ("share", "hostname"),
+    "CASECLERK_SHARE_PORT": ("share", "port"),
+    "CASECLERK_SHARE_TUNNEL_NAME": ("share", "tunnel_name"),
     "CASECLERK_PROMPTS_DIR": ("prompts_dir",),
 }
 

@@ -26,6 +26,7 @@ from caseclerk_core.models import (
     JobState,
     ProcessingFailure,
     ProcessingStatus,
+    RemoteRequest,
     SearchHit,
 )
 
@@ -125,8 +126,58 @@ CREATE INDEX idx_jobs_document ON jobs(document_id);
 # `meta` itself is created by _migrate() before any migration script runs, since it's
 # what tracks schema_version in the first place.
 
+_SCHEMA_V2 = """
+-- OAuth state for the HTTP transport (stage 5: ChatGPT remote access). Each row's `data`
+-- column is the full pydantic model (OAuthClientInformationFull / AuthorizationCode /
+-- AccessToken / RefreshToken) as JSON; caseclerk_core stays unaware of the mcp SDK's
+-- types, caseclerk_mcp.oauth owns (de)serialization. expires_at is duplicated out of the
+-- blob only so it's indexable.
+CREATE TABLE oauth_clients (
+    client_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE oauth_auth_codes (
+    code TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE TABLE oauth_access_tokens (
+    token TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    expires_at INTEGER
+);
+
+CREATE TABLE oauth_refresh_tokens (
+    token TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    expires_at INTEGER
+);
+
+CREATE INDEX idx_oauth_access_tokens_client ON oauth_access_tokens(client_id);
+CREATE INDEX idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);
+
+-- Audit trail: one row per tool call made over the HTTP transport (never stdio).
+CREATE TABLE remote_requests (
+    id INTEGER PRIMARY KEY,
+    ts TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    args_summary TEXT,
+    ok INTEGER NOT NULL,
+    error TEXT
+);
+
+CREATE INDEX idx_remote_requests_ts ON remote_requests(ts);
+"""
+
 _MIGRATIONS: list[tuple[int, str]] = [
     (1, _SCHEMA_V1),
+    (2, _SCHEMA_V2),
 ]
 
 
@@ -611,3 +662,116 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
         (key, value),
     )
     conn.commit()
+
+
+# --- oauth state (HTTP transport only) --------------------------------------
+# Every value here is an opaque JSON blob from the caller's point of view; only
+# caseclerk_mcp.oauth knows the pydantic shapes involved.
+
+
+def upsert_oauth_client(conn: sqlite3.Connection, client_id: str, data_json: str) -> None:
+    conn.execute(
+        "INSERT INTO oauth_clients(client_id, data, created_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(client_id) DO UPDATE SET data = excluded.data",
+        (client_id, data_json, _now_iso()),
+    )
+    conn.commit()
+
+
+def get_oauth_client(conn: sqlite3.Connection, client_id: str) -> str | None:
+    row = conn.execute("SELECT data FROM oauth_clients WHERE client_id = ?", (client_id,)).fetchone()
+    return str(row["data"]) if row else None
+
+
+def insert_oauth_auth_code(
+    conn: sqlite3.Connection, code: str, client_id: str, data_json: str, expires_at: float
+) -> None:
+    conn.execute(
+        "INSERT INTO oauth_auth_codes(code, client_id, data, expires_at) VALUES (?, ?, ?, ?)",
+        (code, client_id, data_json, expires_at),
+    )
+    conn.commit()
+
+
+def get_oauth_auth_code(conn: sqlite3.Connection, code: str) -> str | None:
+    row = conn.execute("SELECT data FROM oauth_auth_codes WHERE code = ?", (code,)).fetchone()
+    return str(row["data"]) if row else None
+
+
+def delete_oauth_auth_code(conn: sqlite3.Connection, code: str) -> None:
+    conn.execute("DELETE FROM oauth_auth_codes WHERE code = ?", (code,))
+    conn.commit()
+
+
+def insert_oauth_access_token(
+    conn: sqlite3.Connection, token: str, client_id: str, data_json: str, expires_at: int | None
+) -> None:
+    conn.execute(
+        "INSERT INTO oauth_access_tokens(token, client_id, data, expires_at) VALUES (?, ?, ?, ?)",
+        (token, client_id, data_json, expires_at),
+    )
+    conn.commit()
+
+
+def get_oauth_access_token(conn: sqlite3.Connection, token: str) -> str | None:
+    row = conn.execute("SELECT data FROM oauth_access_tokens WHERE token = ?", (token,)).fetchone()
+    return str(row["data"]) if row else None
+
+
+def delete_oauth_access_token(conn: sqlite3.Connection, token: str) -> None:
+    conn.execute("DELETE FROM oauth_access_tokens WHERE token = ?", (token,))
+    conn.commit()
+
+
+def insert_oauth_refresh_token(
+    conn: sqlite3.Connection, token: str, client_id: str, data_json: str, expires_at: int | None
+) -> None:
+    conn.execute(
+        "INSERT INTO oauth_refresh_tokens(token, client_id, data, expires_at) VALUES (?, ?, ?, ?)",
+        (token, client_id, data_json, expires_at),
+    )
+    conn.commit()
+
+
+def get_oauth_refresh_token(conn: sqlite3.Connection, token: str) -> str | None:
+    row = conn.execute("SELECT data FROM oauth_refresh_tokens WHERE token = ?", (token,)).fetchone()
+    return str(row["data"]) if row else None
+
+
+def delete_oauth_refresh_token(conn: sqlite3.Connection, token: str) -> None:
+    conn.execute("DELETE FROM oauth_refresh_tokens WHERE token = ?", (token,))
+    conn.commit()
+
+
+def delete_oauth_tokens_for_client(conn: sqlite3.Connection, client_id: str) -> None:
+    conn.execute("DELETE FROM oauth_access_tokens WHERE client_id = ?", (client_id,))
+    conn.execute("DELETE FROM oauth_refresh_tokens WHERE client_id = ?", (client_id,))
+    conn.commit()
+
+
+# --- audit log (HTTP transport only) ----------------------------------------
+
+
+def insert_remote_request(
+    conn: sqlite3.Connection, *, tool: str, args_summary: str | None, ok: bool, error: str | None
+) -> None:
+    conn.execute(
+        "INSERT INTO remote_requests(ts, tool, args_summary, ok, error) VALUES (?, ?, ?, ?, ?)",
+        (_now_iso(), tool, args_summary, 1 if ok else 0, error),
+    )
+    conn.commit()
+
+
+def list_remote_requests(conn: sqlite3.Connection, limit: int = 20) -> list[RemoteRequest]:
+    rows = conn.execute("SELECT * FROM remote_requests ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [
+        RemoteRequest(
+            id=row["id"],
+            ts=datetime.fromisoformat(row["ts"]),
+            tool=row["tool"],
+            args_summary=row["args_summary"],
+            ok=bool(row["ok"]),
+            error=row["error"],
+        )
+        for row in rows
+    ]

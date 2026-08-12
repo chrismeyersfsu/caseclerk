@@ -35,7 +35,7 @@ def _seed_case(conn: sqlite3.Connection, client_name: str, case_number: str, tex
 
 
 def test_schema_version_recorded(conn: sqlite3.Connection) -> None:
-    assert db.get_meta(conn, "schema_version") == "1"
+    assert db.get_meta(conn, "schema_version") == "2"
 
 
 def test_fts5_available(conn: sqlite3.Connection) -> None:
@@ -248,3 +248,67 @@ def test_list_clients_and_cases(conn: sqlite3.Connection) -> None:
     assert len(cases) == 1
     assert cases[0].case_number == "2026-0142"
     assert cases[0].document_count == 1
+
+
+def test_oauth_client_roundtrip(conn: sqlite3.Connection) -> None:
+    assert db.get_oauth_client(conn, "client-1") is None
+    db.upsert_oauth_client(conn, "client-1", '{"client_id": "client-1"}')
+    assert db.get_oauth_client(conn, "client-1") == '{"client_id": "client-1"}'
+    db.upsert_oauth_client(conn, "client-1", '{"client_id": "client-1", "v": 2}')
+    assert db.get_oauth_client(conn, "client-1") == '{"client_id": "client-1", "v": 2}'
+
+
+def test_oauth_auth_code_roundtrip_and_delete(conn: sqlite3.Connection) -> None:
+    db.insert_oauth_auth_code(conn, "code-1", "client-1", '{"code": "code-1"}', expires_at=123.0)
+    assert db.get_oauth_auth_code(conn, "code-1") == '{"code": "code-1"}'
+    db.delete_oauth_auth_code(conn, "code-1")
+    assert db.get_oauth_auth_code(conn, "code-1") is None
+
+
+def test_oauth_access_token_roundtrip_and_delete(conn: sqlite3.Connection) -> None:
+    db.insert_oauth_access_token(conn, "tok-1", "client-1", '{"token": "tok-1"}', expires_at=None)
+    assert db.get_oauth_access_token(conn, "tok-1") == '{"token": "tok-1"}'
+    db.delete_oauth_access_token(conn, "tok-1")
+    assert db.get_oauth_access_token(conn, "tok-1") is None
+
+
+def test_oauth_refresh_token_roundtrip_and_delete(conn: sqlite3.Connection) -> None:
+    db.insert_oauth_refresh_token(conn, "rt-1", "client-1", '{"token": "rt-1"}', expires_at=None)
+    assert db.get_oauth_refresh_token(conn, "rt-1") == '{"token": "rt-1"}'
+    db.delete_oauth_refresh_token(conn, "rt-1")
+    assert db.get_oauth_refresh_token(conn, "rt-1") is None
+
+
+def test_delete_oauth_tokens_for_client_removes_both_kinds(conn: sqlite3.Connection) -> None:
+    db.insert_oauth_access_token(conn, "tok-1", "client-1", "{}", expires_at=None)
+    db.insert_oauth_refresh_token(conn, "rt-1", "client-1", "{}", expires_at=None)
+    db.insert_oauth_access_token(conn, "tok-2", "client-2", "{}", expires_at=None)
+
+    db.delete_oauth_tokens_for_client(conn, "client-1")
+
+    assert db.get_oauth_access_token(conn, "tok-1") is None
+    assert db.get_oauth_refresh_token(conn, "rt-1") is None
+    assert db.get_oauth_access_token(conn, "tok-2") == "{}"  # a different client is untouched
+
+
+def test_remote_requests_audit_log(conn: sqlite3.Connection) -> None:
+    assert db.list_remote_requests(conn) == []
+
+    db.insert_remote_request(conn, tool="list_clients", args_summary="{}", ok=True, error=None)
+    db.insert_remote_request(
+        conn, tool="search_case", args_summary="{'queries': ['x']}", ok=False, error="boom"
+    )
+
+    entries = db.list_remote_requests(conn)
+    assert len(entries) == 2
+    assert entries[0].tool == "search_case"  # most recent first
+    assert entries[0].ok is False
+    assert entries[0].error == "boom"
+    assert entries[1].tool == "list_clients"
+    assert entries[1].ok is True
+
+
+def test_remote_requests_respects_limit(conn: sqlite3.Connection) -> None:
+    for i in range(5):
+        db.insert_remote_request(conn, tool=f"tool-{i}", args_summary=None, ok=True, error=None)
+    assert len(db.list_remote_requests(conn, limit=2)) == 2

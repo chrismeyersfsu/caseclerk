@@ -28,6 +28,9 @@ def test_defaults_when_no_file_present() -> None:
     assert cfg.updates.auto is True
     assert cfg.updates.check_interval_hours == 24
     assert cfg.summarization.enabled is False
+    assert cfg.share.hostname is None
+    assert cfg.share.port == 8787
+    assert cfg.share.tunnel_name == "caseclerk"
 
 
 def test_file_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,6 +59,24 @@ def test_env_overrides_file(monkeypatch: pytest.MonkeyPatch) -> None:
     assert cfg.processing.concurrency == 8
     assert cfg.updates.auto is False
     assert cfg.processing.ignore == ["a/**", "b/**"]
+
+
+def test_share_config_file_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"share": {"hostname": "caseclerk.example.com", "port": 9000}}))
+
+    cfg = load_config()
+    assert cfg.share.hostname == "caseclerk.example.com"
+    assert cfg.share.port == 9000
+    assert cfg.share.tunnel_name == "caseclerk"  # unspecified nested field keeps its default
+
+    monkeypatch.setenv("CASECLERK_SHARE_PORT", "9100")
+    monkeypatch.setenv("CASECLERK_SHARE_TUNNEL_NAME", "custom-tunnel")
+    cfg_after_env = load_config()
+    assert cfg_after_env.share.port == 9100
+    assert cfg_after_env.share.tunnel_name == "custom-tunnel"
+    assert cfg_after_env.share.hostname == "caseclerk.example.com"  # untouched by env
 
 
 def test_save_and_reload_roundtrip() -> None:
