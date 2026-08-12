@@ -43,7 +43,9 @@ def test_build_fixture_drive_creates_the_expected_tree(tmp_path: Path) -> None:
         f"{OTHER_CLIENT}/{OTHER_CLIENT_CASE_2}/meeting-notes.txt",
         f"{OTHER_CLIENT}/{OTHER_CLIENT_CASE_2}/correspondence.docx",
     }
-    actual = {str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()}
+    # .as_posix(), not str(): on Windows, Path's str form uses backslashes, which would
+    # never match the forward-slash literals above
+    actual = {p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()}
     assert actual == expected
 
 
