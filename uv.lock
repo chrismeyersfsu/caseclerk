@@ -20,6 +20,7 @@ members = [
 
 [manifest.dependency-groups]
 dev = [
+    { name = "caseclerk-fixtures", editable = "packages/caseclerk-fixtures" },
     { name = "caseclerk-pipeline", editable = "packages/caseclerk-pipeline" },
     { name = "fpdf2", specifier = ">=2.7" },
     { name = "mypy", specifier = ">=1.11" },

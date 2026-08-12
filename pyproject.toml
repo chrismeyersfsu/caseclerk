@@ -4,6 +4,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 caseclerk-core = { workspace = true }
 caseclerk-pipeline = { workspace = true }
+caseclerk-fixtures = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -12,9 +13,12 @@ dev = [
     "mypy>=1.11",
     "python-docx>=1.1",
     "fpdf2>=2.7",
-    # caseclerk-fixtures' tests exercise the real stage-1 extractors against the
+    # caseclerk-fixtures' own tests exercise the real stage-1 extractors against the
     # generated docs; caseclerk-fixtures itself has no runtime dependency on either.
     "caseclerk-pipeline",
+    # caseclerk-cli's tests build a real fixture drive to drive init/process/status/retry
+    # against; caseclerk-cli has no runtime dependency on caseclerk-fixtures.
+    "caseclerk-fixtures",
 ]
 
 [tool.ruff]
@@ -47,6 +51,12 @@ disallow_untyped_defs = true
 no_implicit_reexport = false
 mypy_path = "packages/caseclerk-core/src:packages/caseclerk-pipeline/src:packages/caseclerk-artifacts/src:packages/caseclerk-mcp/src:packages/caseclerk-cli/src:packages/caseclerk-fixtures/src"
 explicit_package_bases = true
+# Every package's tests/ is its own root (no __init__.py, by design -- see the stage-1
+# scaffold commit), so two packages both naming a fixture file "conftest.py" compute the
+# same top-level module name and mypy refuses to check either ("Duplicate module named
+# conftest"). conftest.py content here is simple pytest wiring; excluding it from the
+# unified sweep is the standard workaround for this mypy limitation in a multi-package repo.
+exclude = ["/tests/conftest\\.py$"]
 
 [[tool.mypy.overrides]]
 module = "mammoth.*"

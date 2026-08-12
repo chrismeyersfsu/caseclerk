@@ -1,4 +1,8 @@
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 from caseclerk_core.discovery import discover, looks_like_case_number, score_candidate
 
@@ -25,6 +29,22 @@ def test_score_candidate_counts_client_dirs_with_case_subdirs(tmp_path: Path) ->
 
 def test_score_candidate_zero_for_non_directory(tmp_path: Path) -> None:
     assert score_candidate(tmp_path / "does-not-exist") == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod-based permission denial isn't portable to Windows")
+def test_score_candidate_skips_unreadable_entries_instead_of_crashing(tmp_path: Path) -> None:
+    """Regression test: real mounts (/mnt, /media, /Volumes) routinely contain entries the
+    current user can't stat; one bad entry must not abort scoring every other candidate."""
+    _build_clio_tree(tmp_path)
+    locked = tmp_path / "Locked Client"
+    locked.mkdir()
+    (locked / "2026-9999").mkdir()
+    os.chmod(locked, 0o000)
+    try:
+        # must not raise, and the two real client dirs are still counted
+        assert score_candidate(tmp_path) == 2
+    finally:
+        os.chmod(locked, 0o755)  # restore so tmp_path cleanup can remove it
 
 
 def test_discover_ranks_injected_roots_by_score(tmp_path: Path) -> None:

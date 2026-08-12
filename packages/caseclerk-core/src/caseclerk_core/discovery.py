@@ -18,29 +18,45 @@ from pathlib import Path
 _CASE_NUMBER_CHARS = re.compile(r"^[A-Za-z0-9-]+$")
 
 
+def _safe_is_dir(path: Path) -> bool:
+    with contextlib.suppress(OSError):
+        return path.is_dir()
+    return False
+
+
 def looks_like_case_number(name: str) -> bool:
     """Alnum-with-dashes containing at least one digit, e.g. '2026-0142'."""
     return bool(_CASE_NUMBER_CHARS.match(name)) and any(ch.isdigit() for ch in name)
 
 
 def score_candidate(root: Path) -> int:
-    """Count top-level dirs shaped like a client folder: contains >=1 case-number-shaped subdir."""
-    if not root.is_dir():
-        return 0
+    """Count top-level dirs shaped like a client folder: contains >=1 case-number-shaped subdir.
+
+    Scans of real mount points (``/mnt``, ``/media``, ``/Volumes``) routinely hit entries
+    the current user can't stat (permission-denied system files, broken mounts); every
+    filesystem call here is per-entry try/except'd so one bad entry just scores as "not a
+    match" instead of aborting discovery for every other candidate.
+    """
     try:
+        if not root.is_dir():
+            return 0
         entries = list(root.iterdir())
     except OSError:
         return 0
+
     score = 0
     for entry in entries:
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
         try:
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
             sub_entries = list(entry.iterdir())
         except OSError:
             continue
-        if any(sub.is_dir() and looks_like_case_number(sub.name) for sub in sub_entries):
-            score += 1
+        try:
+            if any(sub.is_dir() and looks_like_case_number(sub.name) for sub in sub_entries):
+                score += 1
+        except OSError:
+            continue
     return score
 
 
@@ -58,7 +74,9 @@ def candidate_paths(system: str | None = None, home: Path | None = None) -> list
         volumes = Path("/Volumes")
         if volumes.is_dir():
             with contextlib.suppress(OSError):
-                candidates.extend(v for v in volumes.iterdir() if v.is_dir() and "clio" in v.name.lower())
+                for entry in volumes.iterdir():
+                    if _safe_is_dir(entry) and "clio" in entry.name.lower():
+                        candidates.append(entry)
         candidates.append(home / "Clio Drive")
         candidates.append(home / "Clio")
     else:
@@ -66,7 +84,9 @@ def candidate_paths(system: str | None = None, home: Path | None = None) -> list
         for base in (Path("/mnt"), Path("/media")):
             if base.is_dir():
                 with contextlib.suppress(OSError):
-                    candidates.extend(p for p in base.iterdir() if p.is_dir())
+                    for entry in base.iterdir():
+                        if _safe_is_dir(entry):
+                            candidates.append(entry)
 
     seen: set[Path] = set()
     unique: list[Path] = []
