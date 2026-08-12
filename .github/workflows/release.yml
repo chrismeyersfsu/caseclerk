@@ -39,6 +39,61 @@ jobs:
   verify-e2e:
     uses: ./.github/workflows/e2e.yml
 
+  package-windows:
+    needs:
+      - verify-core
+      - verify-pipeline
+      - verify-artifacts
+      - verify-mcp
+      - verify-cli
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Build Windows package
+        run: uv run python scripts/build_windows.py --dist-dir dist-windows
+
+      - name: Smoke test -- caseclerk.exe --version
+        run: |
+          $version = & "dist-windows\caseclerk\caseclerk.exe" --version
+          Write-Host "version output: $version"
+          if ($LASTEXITCODE -ne 0) { throw "caseclerk.exe --version exited $LASTEXITCODE" }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "unexpected --version output: $version" }
+
+      - name: Smoke test -- caseclerk.exe doctor
+        run: |
+          $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config"
+          $env:CASECLERK_DATA_DIR = "$PWD\smoke-data"
+          $doctorOutput = & "dist-windows\caseclerk\caseclerk.exe" doctor 2>&1 | Out-String
+          Write-Host $doctorOutput
+          # exit code 1 is expected here (no documentsRoot in a fresh smoke-test env);
+          # what this proves is that the frozen build actually starts and runs a real
+          # command end to end, not that every check passes.
+          if ($doctorOutput -notmatch "running as a packaged binary") {
+            throw "doctor did not report packaged-binary status:`n$doctorOutput"
+          }
+          if ($doctorOutput -match "Traceback") {
+            throw "doctor crashed:`n$doctorOutput"
+          }
+
+      - name: Upload Windows package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caseclerk-windows-x64
+          path: dist-windows/caseclerk-windows-x64.zip
+          if-no-files-found: error
+
   publish:
     needs:
       - verify-core
@@ -48,6 +103,7 @@ jobs:
       - verify-cli
       - verify-fixtures
       - verify-e2e
+      - package-windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -77,7 +133,13 @@ jobs:
       - name: Zip the e2e report
         run: zip -r e2e-report.zip e2e-report
 
+      - name: Download the Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: caseclerk-windows-x64
+          path: windows-package
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* e2e-report.zip --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* e2e-report.zip windows-package/*.zip --generate-notes
