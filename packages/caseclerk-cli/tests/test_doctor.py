@@ -27,32 +27,71 @@ def test_doctor_reports_missing_documents_root(runner: CliRunner, isolated_env: 
 
 
 def test_doctor_skips_cloudflared_check_when_share_not_configured(
-    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+    runner: CliRunner, isolated_env: Path
 ) -> None:
     documents_root = build_fixture_drive(isolated_env / "documents")
     runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
-    monkeypatch.setattr(
-        main_module.shutil, "which", lambda name: None if name == "cloudflared" else "/bin/true"
-    )
 
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     # not a bare "cloudflared" substring check: pytest's tmp_path is named after this
     # test function, so it would contain "cloudflared" regardless of doctor's output
     assert "]   cloudflared" not in result.output
-    assert "cloudflared is not on PATH" not in result.output
+    assert "not yet downloaded" not in result.output
 
 
-def test_doctor_checks_cloudflared_when_share_hostname_configured(
+def test_doctor_reports_cloudflared_not_yet_downloaded(runner: CliRunner, isolated_env: Path) -> None:
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
+    runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
+
+    result = runner.invoke(app, ["doctor"])
+    # nothing cached/bundled in a fresh isolated_env -- informational, not a failure:
+    # `caseclerk share start`/`share setup` fetches it automatically on first use.
+    assert result.exit_code == 0
+    assert "[ok]   cloudflared not yet downloaded" in result.output
+
+
+def test_doctor_reports_cloudflared_ready_when_cached(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     documents_root = build_fixture_drive(isolated_env / "documents")
     runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
+
+    monkeypatch.setattr(main_module.cloudflared_module, "find_bundled", lambda: None)
+    monkeypatch.setattr(main_module.cloudflared_module, "find_cached", lambda: Path("/data/bin/cloudflared"))
+    monkeypatch.setattr(main_module.cloudflared_module, "source_label", lambda _p: "downloaded")
     monkeypatch.setattr(
-        main_module.shutil, "which", lambda name: None if name == "cloudflared" else "/bin/true"
+        main_module.cloudflared_module, "installed_version", lambda _p: "cloudflared version 2026.7.3"
     )
 
     result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "[ok]   cloudflared ready (downloaded, cloudflared version 2026.7.3)" in result.output
+
+
+def test_doctor_frozen_skips_uv_check(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
+    monkeypatch.setattr(main_module.binary_update, "is_frozen", lambda: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "[ok]   running as a packaged binary" in result.output
+    assert "uv is on PATH" not in result.output
+
+
+def test_doctor_reports_missing_uv_when_not_frozen(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    documents_root = build_fixture_drive(isolated_env / "documents")
+    runner.invoke(app, ["config", "set", "documentsRoot", str(documents_root)])
+    monkeypatch.setattr(main_module.binary_update, "is_frozen", lambda: False)
+    monkeypatch.setattr(main_module.shutil, "which", lambda _name: None)
+
+    result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
-    assert "[FAIL] cloudflared is not on PATH" in result.output
+    assert "[FAIL] uv is not on PATH" in result.output

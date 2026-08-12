@@ -16,9 +16,10 @@ from pathlib import Path
 
 import typer
 
+from caseclerk_cli import cloudflared as cloudflared_module
 from caseclerk_cli import config_commands, share
 from caseclerk_cli.claude_desktop import SERVER_ENTRY, claude_desktop_config_path, write_claude_desktop_entry
-from caseclerk_core import db, scan
+from caseclerk_core import binary_update, db, scan
 from caseclerk_core import update as core_update
 from caseclerk_core.config import load_config, save_config
 from caseclerk_core.discovery import discover
@@ -47,6 +48,10 @@ def _root(
     ),
 ) -> None:
     """CaseClerk: a case-files MCP server for a small law firm."""
+    # Only a packaged (PyInstaller) install ever has .old-suffixed swap leftovers
+    # to clean up (see caseclerk_core.binary_update); a no-op everywhere else.
+    if binary_update.is_frozen():
+        binary_update.cleanup_stale_files()
 
 
 def _make_case_dir_resolver(conn: sqlite3.Connection, documents_root: Path) -> Callable[[int], Path]:
@@ -243,8 +248,13 @@ def update() -> None:
         return
 
     typer.echo(f"Update available: {available}. Applying...")
-    core_update.apply_update(available)
-    typer.echo("Update started in the background. Restart caseclerk to use the new version.")
+    result = core_update.apply_update(available)
+    if isinstance(result, binary_update.BinaryUpdateResult):
+        typer.echo(result.detail)
+        if not result.ok:
+            raise typer.Exit(code=1)
+    else:
+        typer.echo("Update started in the background. Restart caseclerk to use the new version.")
 
 
 @app.command()
@@ -271,7 +281,9 @@ def audit(
 
 @app.command()
 def doctor() -> None:
-    """Check FTS5 availability, uv on PATH, config validity, documentsRoot, and db writability."""
+    """Check FTS5 availability, uv on PATH (or, for a packaged binary, that it's
+    packaged), config validity, documentsRoot, db writability, and (if `share`
+    is configured) cloudflared's status."""
     healthy = True
 
     try:
@@ -283,7 +295,9 @@ def doctor() -> None:
         healthy = False
         typer.echo("[FAIL] sqlite3 lacks FTS5 -- use a python.org or uv-managed Python build")
 
-    if shutil.which("uv"):
+    if binary_update.is_frozen():
+        typer.echo("[ok]   running as a packaged binary (updates via GitHub Releases, not uv)")
+    elif shutil.which("uv"):
         typer.echo("[ok]   uv is on PATH")
     else:
         healthy = False
@@ -314,11 +328,16 @@ def doctor() -> None:
         typer.echo(f"[FAIL] database is not writable: {exc}")
 
     if cfg is not None and cfg.share.hostname:
-        if shutil.which("cloudflared"):
-            typer.echo("[ok]   cloudflared is on PATH")
+        cloudflared_bin = cloudflared_module.find_bundled() or cloudflared_module.find_cached()
+        if cloudflared_bin is not None:
+            source = cloudflared_module.source_label(cloudflared_bin)
+            version = cloudflared_module.installed_version(cloudflared_bin) or "unknown version"
+            typer.echo(f"[ok]   cloudflared ready ({source}, {version})")
         else:
-            healthy = False
-            typer.echo("[FAIL] cloudflared is not on PATH (required for `caseclerk share`)")
+            typer.echo(
+                "[ok]   cloudflared not yet downloaded -- "
+                "`caseclerk share start` (or `share setup`) fetches it automatically"
+            )
 
     if not healthy:
         raise typer.Exit(code=1)

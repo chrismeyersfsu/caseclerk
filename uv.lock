@@ -148,6 +148,7 @@ dependencies = [
     { name = "caseclerk-core" },
     { name = "caseclerk-mcp" },
     { name = "caseclerk-pipeline" },
+    { name = "httpx" },
     { name = "typer" },
 ]
 
@@ -157,6 +158,7 @@ requires-dist = [
     { name = "caseclerk-core", editable = "packages/caseclerk-core" },
     { name = "caseclerk-mcp", editable = "packages/caseclerk-mcp" },
     { name = "caseclerk-pipeline", editable = "packages/caseclerk-pipeline" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "typer", specifier = ">=0.12" },
 ]
 

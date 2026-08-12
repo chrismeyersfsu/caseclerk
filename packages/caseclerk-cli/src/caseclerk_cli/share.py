@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -22,6 +21,8 @@ from pathlib import Path
 
 import typer
 
+from caseclerk_cli import cloudflared as cloudflared_module
+from caseclerk_cli import shortcuts as shortcuts_module
 from caseclerk_core import db
 from caseclerk_core.config import data_dir, load_config
 
@@ -139,6 +140,23 @@ def _terminate(pid: object) -> bool:
     return not _is_alive(pid)
 
 
+@app.command("setup")
+def share_setup() -> None:
+    """Ensure a working cloudflared binary is available (downloading it if
+    needed) without starting anything -- useful during one-time setup, before
+    share.hostname is even configured, so the download happens up front rather
+    than as a surprise the first time `share start` runs."""
+    try:
+        binary = cloudflared_module.resolve(progress=lambda msg: typer.echo(msg))
+    except cloudflared_module.CloudflaredError as exc:
+        typer.echo(f"Could not obtain cloudflared: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    version = cloudflared_module.installed_version(binary) or "unknown version"
+    source = cloudflared_module.source_label(binary)
+    typer.echo(f"cloudflared ready ({source}, {version}): {binary}")
+
+
 @app.command("start")
 def share_start() -> None:
     """Start the HTTP transport and the cloudflared tunnel, both detached."""
@@ -157,16 +175,17 @@ def share_start() -> None:
         )
         raise typer.Exit(code=1)
 
-    cloudflared_bin = shutil.which("cloudflared")
-    if cloudflared_bin is None:
-        typer.echo("cloudflared is not on PATH. Install it first (see the README).", err=True)
-        raise typer.Exit(code=1)
+    try:
+        cloudflared_bin = cloudflared_module.resolve(progress=lambda msg: typer.echo(msg))
+    except cloudflared_module.CloudflaredError as exc:
+        typer.echo(f"Could not obtain cloudflared: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     caseclerk_bin = _caseclerk_binary()
     server_pid = _spawn([str(caseclerk_bin), "serve", "--transport", "http", "--port", str(cfg.share.port)])
     cloudflared_pid = _spawn(
         [
-            cloudflared_bin,
+            str(cloudflared_bin),
             "tunnel",
             "run",
             "--url",
@@ -252,3 +271,22 @@ def share_status() -> None:
         if entry.error:
             line += f": {entry.error}"
         typer.echo(line)
+
+
+@app.command("shortcuts")
+def share_shortcuts() -> None:
+    """Create desktop shortcuts that toggle sharing on/off with a double-click
+    (Windows only -- there's no equivalent asked for on macOS/Linux)."""
+    if sys.platform != "win32":
+        typer.echo("Desktop shortcuts are only supported on Windows.")
+        return
+
+    try:
+        created = shortcuts_module.create_shortcuts(caseclerk_bin=_caseclerk_binary())
+    except shortcuts_module.ShortcutsUnsupportedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo("Created desktop shortcuts:")
+    for path in created:
+        typer.echo(f"  {path}")

@@ -48,20 +48,77 @@ def fake_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_share_start_requires_hostname_configured(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
+    )
     result = runner.invoke(app, ["share", "start"])
     assert result.exit_code == 1
     assert "share.hostname is not configured" in result.output
 
 
-def test_share_start_requires_cloudflared_on_path(
+def test_share_start_reports_cloudflared_resolution_failure(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: None)
+
+    def _fail_resolve(**kwargs: object) -> Path:
+        raise share_module.cloudflared_module.CloudflaredError("offline, nothing cached")
+
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", _fail_resolve)
     result = runner.invoke(app, ["share", "start"])
     assert result.exit_code == 1
-    assert "cloudflared is not on PATH" in result.output
+    assert "Could not obtain cloudflared" in result.output
+
+
+def test_share_setup_reports_the_resolved_binary(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
+    )
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "installed_version", lambda _path: "cloudflared 1.2.3"
+    )
+    monkeypatch.setattr(share_module.cloudflared_module, "source_label", lambda _path: "downloaded")
+
+    result = runner.invoke(app, ["share", "setup"])
+    assert result.exit_code == 0
+    assert "downloaded" in result.output
+    assert "cloudflared 1.2.3" in result.output
+    assert "/usr/bin/cloudflared" in result.output
+
+
+def test_share_setup_reports_failure(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_resolve(**kwargs: object) -> Path:
+        raise share_module.cloudflared_module.CloudflaredError("offline")
+
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", _fail_resolve)
+    result = runner.invoke(app, ["share", "setup"])
+    assert result.exit_code == 1
+    assert "Could not obtain cloudflared" in result.output
+
+
+def test_share_shortcuts_non_windows_prints_message(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(share_module.sys, "platform", "linux")
+    result = runner.invoke(app, ["share", "shortcuts"])
+    assert result.exit_code == 0
+    assert "only supported on Windows" in result.output
+
+
+def test_share_shortcuts_windows_creates_and_reports(
+    runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(share_module.sys, "platform", "win32")
+    created = [Path("C:/Users/x/Desktop/CaseClerk Sharing ON.lnk")]
+    monkeypatch.setattr(share_module.shortcuts_module, "create_shortcuts", lambda **kwargs: created)
+
+    result = runner.invoke(app, ["share", "shortcuts"])
+    assert result.exit_code == 0
+    assert "CaseClerk Sharing ON.lnk" in result.output
 
 
 def test_share_status_when_not_running(runner: CliRunner, isolated_env: Path) -> None:
@@ -80,7 +137,9 @@ def test_share_start_stop_status_lifecycle(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
 ) -> None:
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
+    )
 
     start_result = runner.invoke(app, ["share", "start"])
     assert start_result.exit_code == 0, start_result.output
@@ -119,7 +178,9 @@ def test_share_status_shows_recent_audit_entries(
     from caseclerk_core import db
 
     runner.invoke(app, ["config", "set", "share.hostname", "caseclerk.example.com"])
-    monkeypatch.setattr(share_module.shutil, "which", lambda _name: "/usr/bin/cloudflared")
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
+    )
 
     runner.invoke(app, ["share", "start"])
 
