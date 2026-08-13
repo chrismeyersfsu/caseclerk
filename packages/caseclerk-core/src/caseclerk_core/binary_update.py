@@ -19,12 +19,14 @@ the caller (`caseclerk update`) is expected to print that URL as a fallback.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import shutil
 import sys
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -38,6 +40,12 @@ EXE_NAME = "caseclerk.exe"
 REQUEST_TIMEOUT_SECONDS = 120.0
 _OLD_SUFFIX = ".old"
 _UPDATES_DIRNAME = "updates"
+
+# Must match scripts/installer.iss's MyAppId/MyAppName exactly -- this is the
+# HKCU uninstall registry key (and display name) Inno Setup's installer
+# creates on install, that _update_windows_uninstall_metadata refreshes here.
+_INNO_APP_ID = "6A3B09B5-E95C-4D9F-AEC6-67AB9A91414C"
+_INNO_APP_NAME = "CaseClerk"
 
 
 class BinaryUpdateError(Exception):
@@ -150,6 +158,40 @@ def cleanup_stale_files(target_dir: Path | None = None) -> int:
     return removed
 
 
+def _update_windows_uninstall_metadata(version_tag: str, *, winreg_module: Any = None) -> None:
+    """Best-effort: after a successful swap, refresh the DisplayVersion (and
+    DisplayName, which embeds it -- Inno Setup's default AppVerName is "Name
+    Version") in the Inno-registered uninstall key, so Settings > Apps shows
+    the version that's actually running rather than the one from initial
+    install. Windows-only; any failure here -- including there being no such
+    key at all, e.g. a non-installer (plain zip) deployment -- must never
+    fail the update itself, so every error is swallowed and logged.
+
+    ``winreg_module`` is an injectable seam for tests: the real `winreg`
+    module only exists on Windows, so tests on any OS supply a fake
+    module-like double instead, bypassing the platform check that guards
+    real (non-test) callers.
+    """
+    if sys.platform != "win32" and winreg_module is None:
+        return
+    try:
+        module = winreg_module if winreg_module is not None else importlib.import_module("winreg")
+    except ImportError:
+        return
+
+    version = version_tag[1:] if version_tag.startswith("v") else version_tag
+    key_path = f"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{{{_INNO_APP_ID}}}_is1"
+    try:
+        key = module.OpenKey(module.HKEY_CURRENT_USER, key_path, 0, module.KEY_SET_VALUE)
+        try:
+            module.SetValueEx(key, "DisplayVersion", 0, module.REG_SZ, version)
+            module.SetValueEx(key, "DisplayName", 0, module.REG_SZ, f"{_INNO_APP_NAME} {version}")
+        finally:
+            module.CloseKey(key)
+    except Exception as exc:  # noqa: BLE001 - best-effort; must never fail the update
+        logger.info("could not update Windows uninstall metadata (non-fatal): %s", exc)
+
+
 def apply_binary_update(version_tag: str, *, client: httpx.Client | None = None) -> BinaryUpdateResult:
     """Download, extract, and swap in version_tag's packaged build. Always
     returns a result rather than raising -- a failure is reported as
@@ -171,6 +213,7 @@ def apply_binary_update(version_tag: str, *, client: httpx.Client | None = None)
         _download_zip(version_tag, asset_name, zip_path, client=http)
         extracted_dir = _extract_zip(zip_path, staging / "extracted")
         _swap_in(extracted_dir, install_dir())
+        _update_windows_uninstall_metadata(version_tag)
         return BinaryUpdateResult(ok=True, detail=f"Updated to {version_tag}. Restart caseclerk to use it.")
     except (httpx.HTTPError, OSError, BinaryUpdateError, zipfile.BadZipFile) as exc:
         logger.warning("binary update to %s failed: %s", version_tag, exc)

@@ -214,3 +214,126 @@ def test_apply_binary_update_bad_zip_falls_back_to_manual_url(
     assert result.ok is False
     assert binary_update.manual_download_url("v0.3.0") in result.detail
     assert (target / binary_update.EXE_NAME).read_text() == "old exe bytes"
+
+
+# --- Windows uninstall registry metadata refresh (best-effort, post-swap) ---
+
+
+class _FakeWinreg:
+    """A minimal stand-in for the stdlib `winreg` module -- real `winreg`
+    only exists on Windows, so tests on any OS inject this instead."""
+
+    HKEY_CURRENT_USER = "HKEY_CURRENT_USER"
+    KEY_SET_VALUE = 0x2
+    REG_SZ = 1
+
+    def __init__(self, *, key_missing: bool = False) -> None:
+        self.key_missing = key_missing
+        self.opened_with: tuple[object, str, int, int] | None = None
+        self.set_values: dict[str, object] = {}
+        self.closed = False
+
+    def OpenKey(self, hive: object, path: str, reserved: int, access: int) -> object:  # noqa: N802
+        self.opened_with = (hive, path, reserved, access)
+        if self.key_missing:
+            raise FileNotFoundError(f"no such key: {path}")
+        return "fake-key-handle"
+
+    def SetValueEx(self, key: object, name: str, reserved: int, value_type: int, value: str) -> None:  # noqa: N802
+        assert key == "fake-key-handle"
+        assert value_type == self.REG_SZ
+        self.set_values[name] = value
+
+    def CloseKey(self, key: object) -> None:  # noqa: N802
+        assert key == "fake-key-handle"
+        self.closed = True
+
+
+def test_update_windows_uninstall_metadata_writes_display_version_and_name() -> None:
+    fake = _FakeWinreg()
+
+    binary_update._update_windows_uninstall_metadata("v0.4.0", winreg_module=fake)
+
+    assert fake.set_values["DisplayVersion"] == "0.4.0"
+    assert fake.set_values["DisplayName"] == "CaseClerk 0.4.0"
+    assert fake.closed is True
+    assert fake.opened_with is not None
+    hive, path, _reserved, access = fake.opened_with
+    assert hive == fake.HKEY_CURRENT_USER
+    assert binary_update._INNO_APP_ID in path
+    assert path.endswith("_is1")
+    assert access == fake.KEY_SET_VALUE
+
+
+def test_update_windows_uninstall_metadata_handles_version_without_v_prefix() -> None:
+    fake = _FakeWinreg()
+    binary_update._update_windows_uninstall_metadata("1.2.3", winreg_module=fake)
+    assert fake.set_values["DisplayVersion"] == "1.2.3"
+
+
+def test_update_windows_uninstall_metadata_never_raises_when_key_missing() -> None:
+    fake = _FakeWinreg(key_missing=True)
+    # A plain-zip (non-installer) deployment has no such registry key at
+    # all -- that's not an error worth failing an otherwise-successful
+    # update over, so this must complete without raising.
+    binary_update._update_windows_uninstall_metadata("v0.4.0", winreg_module=fake)
+    assert fake.set_values == {}
+
+
+def test_update_windows_uninstall_metadata_noop_on_non_windows_without_injected_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    # No winreg_module supplied and not on win32: must not even attempt to
+    # import winreg, which doesn't exist on this platform -- if it tried,
+    # this would raise ModuleNotFoundError and fail the test.
+    binary_update._update_windows_uninstall_metadata("v0.4.0")
+
+
+def test_apply_binary_update_refreshes_uninstall_metadata_after_a_successful_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(binary_update, "data_dir", lambda: tmp_path / "data")
+    target = _make_install_dir(tmp_path)
+    monkeypatch.setattr(binary_update, "install_dir", lambda: target)
+
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        binary_update,
+        "_update_windows_uninstall_metadata",
+        lambda version_tag, **kwargs: captured.setdefault("version_tag", version_tag),
+    )
+
+    zip_bytes = _make_zip_bytes(wrap_in_folder=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=zip_bytes)
+
+    with _client(handler) as client:
+        result = binary_update.apply_binary_update("v0.4.0", client=client)
+
+    assert result.ok is True
+    assert captured["version_tag"] == "v0.4.0"
+
+
+def test_apply_binary_update_download_failure_never_touches_uninstall_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(binary_update, "data_dir", lambda: tmp_path / "data")
+    target = _make_install_dir(tmp_path)
+    monkeypatch.setattr(binary_update, "install_dir", lambda: target)
+
+    def _fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("uninstall metadata must not be touched when the swap never happened")
+
+    monkeypatch.setattr(binary_update, "_update_windows_uninstall_metadata", _fail_if_called)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="not found")
+
+    with _client(handler) as client:
+        result = binary_update.apply_binary_update("v0.4.0", client=client)
+
+    assert result.ok is False
