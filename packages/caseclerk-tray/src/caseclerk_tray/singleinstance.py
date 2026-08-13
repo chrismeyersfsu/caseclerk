@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ def _default_pidfile_path() -> Path:
 
 
 def _pid_alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        return _pid_alive_windows(pid)
     try:
         os.kill(pid, 0)
     except OSError:
@@ -48,6 +51,27 @@ def _pid_alive(pid: int) -> bool:
         # wedging forever on a stale pidfile.
         return False
     return True
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """`os.kill(pid, 0)` is not a safe existence probe on Windows: signal 0
+    is literally CTRL_C_EVENT there, so it delivers a real Ctrl+C to the
+    target instead of merely checking it exists -- if the target happens to
+    be this very process (e.g. re-checking our own just-written pidfile),
+    that Ctrl+C lands on ourselves. `tasklist` is a stock Windows tool that
+    answers the question without touching the process at all. (Same fix as
+    caseclerk_cli.share._is_alive_windows, which hit this exact pitfall
+    first.)"""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/fi", f"PID eq {pid}", "/nh"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return str(pid) in result.stdout
 
 
 def _acquire_pidfile(pidfile_path: Path | None) -> bool:
