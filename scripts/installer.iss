@@ -23,11 +23,21 @@
 #define MyAppExeName "caseclerk.exe"
 ; Fixed for the lifetime of the app -- changing this would orphan the old
 ; uninstall registration (HKCU\...\Uninstall\{AppId}_is1) instead of letting
-; a re-run of Setup upgrade/repair the existing install.
-#define MyAppId "6A3B09B5-E95C-4D9F-AEC6-67AB9A91414C"
+; a re-run of Setup upgrade/repair the existing install. Braces are baked
+; into the value itself (not added at the AppId= call site) since ISPP
+; substitutes {#MyAppId} as plain text -- see the AppId= comment below for
+; why the escaping has to be split exactly this way.
+#define MyAppId "{6A3B09B5-E95C-4D9F-AEC6-67AB9A91414C}"
 
 [Setup]
-AppId={{#MyAppId}}
+; {#MyAppId} expands (via ISPP, at preprocess time) to the literal text
+; "{6A3B09B5-...}" -- braces included, since that's what's in the #define
+; above. Inno's OWN compiler-level constant syntax then sees that leading
+; "{" and would try to look it up as a {constant} unless escaped, so this
+; needs exactly one extra "{" prepended (making the final compiler-visible
+; text start with "{{", Inno's escape for a literal "{") and zero extra "}"
+; appended (the value's own trailing "}" already closes it correctly).
+AppId={{#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
