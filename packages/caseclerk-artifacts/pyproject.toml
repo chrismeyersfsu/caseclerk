@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-artifacts"
-version = "0.4.1"
+version = "0.5.0"
 description = "Email draft artifact (.eml/.txt) writer for CaseClerk."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]

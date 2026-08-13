@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-fixtures"
-version = "0.4.1"
+version = "0.5.0"
 description = "Dev-only synthetic documents-drive generator, used by tests, e2e, and demos."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]

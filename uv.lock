@@ -147,12 +147,12 @@ wheels = [
 
 [[package]]
 name = "caseclerk-artifacts"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-artifacts" }
 
 [[package]]
 name = "caseclerk-cli"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-cli" }
 dependencies = [
     { name = "caseclerk-artifacts" },
@@ -175,7 +175,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-core"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-core" }
 dependencies = [
     { name = "httpx" },
@@ -192,7 +192,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-fixtures"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-fixtures" }
 dependencies = [
     { name = "fpdf2" },
@@ -207,7 +207,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-mcp"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-mcp" }
 dependencies = [
     { name = "caseclerk-artifacts" },
@@ -226,7 +226,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-pipeline"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-pipeline" }
 dependencies = [
     { name = "caseclerk-core" },
@@ -243,7 +243,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-tray"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "packages/caseclerk-tray" }
 dependencies = [
     { name = "caseclerk-cli" },
