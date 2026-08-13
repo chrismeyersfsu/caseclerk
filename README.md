@@ -7,6 +7,7 @@
 [![checks-cli](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-cli.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-cli.yml)
 [![checks-fixtures](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-fixtures.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-fixtures.yml)
 [![checks-tray](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-tray.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-tray.yml)
+[![checks-clio-export](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-clio-export.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-clio-export.yml)
 [![e2e](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/e2e.yml)
 
 CaseClerk is an [MCP](https://modelcontextprotocol.io) server for a small law firm's case files. It lets an MCP host (Claude Desktop, Claude Code, or any other MCP client) read and search the documents for exactly one client and case at a time, and draft an Outlook-ready email into that case's folder — never mixing clients, never touching anything outside the case it was asked about. Everything else — chat, dictation, model choice, session history — is left to the host; CaseClerk only builds what is specific to running a law practice's document folder.
@@ -266,6 +267,10 @@ The attorney's daily driver is the ChatGPT app, not Claude Desktop, so his machi
 5. **Auto-update.** Both `caseclerk.exe` and `caseclerk-tray.exe` know they're a packaged binary (`caseclerk doctor` reports "running as a packaged binary" rather than checking for `uv`; the tray's menu shows "Check for Updates...") and update the same way: download the new release's zip and swap it into the shared install directory in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in (both executables and their shared support files at once), and a leftover-cleanup pass runs at every startup. Once a swap has landed, the tray menu shows **"Restart to Apply Update"**, which relaunches it for you. The install location, PATH entry, Start Menu shortcuts, and Desktop toggle shortcuts are all untouched by this — nothing to reinstall, re-download the installer for, or reconfigure; just restart (or click "Restart to Apply Update") to pick it up. If a swap ever fails (e.g. offline), `caseclerk update` prints the release page URL as a manual fallback instead of leaving a half-updated install.
 
 The plain `caseclerk-windows-x64.zip` (unzip-and-run, no PATH/Start Menu/uninstaller) is still published alongside the installer for anyone who'd rather not install anything system-registered at all.
+
+## Clio export
+
+`packages/caseclerk-clio-export` ships a standalone `clio-export` CLI that pulls contacts and matters out of [Clio Manage](https://www.clio.com/) through its v4 REST API: a one-time `clio-export auth` (OAuth in your browser), then unattended `clio-export pull` snapshots to JSON/CSV with automatic token refresh — cron-friendly. Exports contain client data and are written to a git-ignored directory; see the [package README](packages/caseclerk-clio-export/README.md).
 
 ## Roadmap
 

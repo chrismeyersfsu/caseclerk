@@ -1,0 +1,24 @@
+name: checks-clio-export
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/caseclerk-clio-export/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-clio-export.yml"
+  pull_request:
+    paths:
+      - "packages/caseclerk-clio-export/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-clio-export.yml"
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-clio-export

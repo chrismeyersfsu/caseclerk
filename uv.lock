@@ -12,6 +12,7 @@ resolution-markers = [
 members = [
     "caseclerk-artifacts",
     "caseclerk-cli",
+    "caseclerk-clio-export",
     "caseclerk-core",
     "caseclerk-fixtures",
     "caseclerk-mcp",
@@ -172,6 +173,17 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "typer", specifier = ">=0.12" },
 ]
+
+[[package]]
+name = "caseclerk-clio-export"
+version = "0.1.0"
+source = { editable = "packages/caseclerk-clio-export" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
 
 [[package]]
 name = "caseclerk-core"

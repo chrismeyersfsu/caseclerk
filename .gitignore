@@ -17,6 +17,15 @@ htmlcov/
 tests/e2e/output/
 test-artifacts/
 
+# Local env / secrets (direnv exports API credentials)
+.envrc
+.direnv/
+.env
+.env.*
+
+# Clio export output (client data — never commit)
+data/
+
 # Editors / OS
 .DS_Store
 .idea/
