@@ -74,9 +74,17 @@ def _acquire_windows(*, kernel32_module: Any = None) -> bool:
     doubles as the injectable seam tests use to exercise this path without a
     real Windows mutex."""
     ctypes_mod = importlib.import_module("ctypes")
-    kernel32 = (
-        kernel32_module if kernel32_module is not None else ctypes_mod.WinDLL("kernel32", use_last_error=True)
-    )
+    if kernel32_module is not None:
+        kernel32 = kernel32_module
+    else:
+        kernel32 = ctypes_mod.WinDLL("kernel32", use_last_error=True)
+        # Without explicit types, ctypes defaults a function's return type to
+        # c_int, which would silently truncate the 64-bit HANDLE
+        # CreateMutexW actually returns on x64 Windows -- harmless in
+        # practice (kernel handles are small values) but not correct, and
+        # CloseHandle below deserves the real value, not a truncated one.
+        kernel32.CreateMutexW.restype = ctypes_mod.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes_mod.c_void_p, ctypes_mod.c_int, ctypes_mod.c_wchar_p]
 
     handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
     if not handle:
