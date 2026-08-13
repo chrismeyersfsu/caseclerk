@@ -223,19 +223,21 @@ The "CaseClerk Sharing ON/OFF" Desktop shortcuts from `share shortcuts` above co
 
 ### Installing on the attorney's machine
 
-The attorney's daily driver is the ChatGPT app, not Claude Desktop, so his machine doesn't need Python, uv, or a terminal habit — just the packaged Windows build. The Cloudflare-account steps (login, `tunnel create`, DNS route — Option A above, steps 1–2) happen ahead of time, at home, on the developer's own machine, which produces a tunnel credentials JSON file; the on-site visit itself never touches Cloudflare's login flow:
+The attorney's daily driver is the ChatGPT app, not Claude Desktop, so his machine doesn't need Python, uv, or a terminal habit — just `CaseClerk-Setup.exe`, a real (if unsigned) Windows installer. The Cloudflare-account steps (login, `tunnel create`, DNS route — Option A above, steps 1–2) happen ahead of time, at home, on the developer's own machine, which produces a tunnel credentials JSON file; the on-site visit itself never touches Cloudflare's login flow:
 
 1. **At home:** run Option A's steps 1–2 above on your own machine, and keep the resulting `<tunnel-id>.json` credentials file handy (e.g. on a USB stick).
-2. **On site: download and unzip.** Grab `caseclerk-windows-x64.zip` from the [latest release](https://github.com/chrismeyersfsu/caseclerk/releases/latest) and extract it anywhere (e.g. `C:\Users\<name>\CaseClerk\`). The folder is self-contained — `caseclerk.exe` plus everything it needs; nothing else to install.
-3. **On site: open a terminal in that folder** (Shift+right-click → "Open PowerShell window here", or `cd` to it) and run the entire non-interactive setup:
+2. **On site: download and run the installer.** Grab `CaseClerk-Setup-<version>.exe` from the [latest release](https://github.com/chrismeyersfsu/caseclerk/releases/latest) and run it. Windows SmartScreen will likely flag it ("Windows protected your PC") since it isn't code-signed — click **More info → Run anyway**. The installer itself needs no admin/UAC prompt (it installs per-user, to `%LOCALAPPDATA%\Programs\CaseClerk`) and doesn't run `init`/`share setup`/anything else on its own; it just puts `caseclerk.exe` on disk, adds it to your **user** PATH (so any *new* PowerShell/terminal window can just run `caseclerk`, no `cd`-ing into an install folder first), adds a Start Menu "CaseClerk Status" shortcut (runs `doctor` + `share status`, for a quick health check any time), and registers a normal uninstaller under Settings → Apps.
+3. **On site: open a (new) PowerShell window** — new, so it picks up the PATH change — **and run the entire non-interactive setup:**
    ```powershell
-   .\caseclerk.exe init --yes
-   .\caseclerk.exe share setup --credentials <path-to-tunnel-id.json> --hostname caseclerk.yourdomain.com
-   .\caseclerk.exe share shortcuts
+   caseclerk init --yes
+   caseclerk share setup --credentials <path-to-tunnel-id.json> --hostname caseclerk.yourdomain.com
+   caseclerk share shortcuts
    ```
    That's the whole visit — no browser, no Cloudflare login, nothing typed into a Cloudflare prompt on this machine. `share setup` prints a verification pass at the end confirming the binary, credentials, and config.yml all landed where `share start` expects them.
-4. **Start it and add the connector in ChatGPT** — same as "Add the connector in ChatGPT" above, using `.\caseclerk.exe share start`.
-5. **Auto-update.** `caseclerk.exe` knows it's a packaged binary (`caseclerk.exe doctor` reports "running as a packaged binary" rather than checking for `uv`) and updates itself accordingly: `caseclerk update` downloads the new release's zip and swaps it into the same folder in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in, and a leftover-cleanup pass runs at every startup. Nothing to reinstall or re-unzip; just restart `caseclerk.exe` (or a running `share start`) afterward to pick it up. If a swap ever fails (e.g. offline), the command prints the release page URL as a manual fallback instead of leaving a half-updated install.
+4. **Start it and add the connector in ChatGPT** — same as "Add the connector in ChatGPT" above, using `caseclerk share start`.
+5. **Auto-update.** `caseclerk.exe` knows it's a packaged binary (`caseclerk doctor` reports "running as a packaged binary" rather than checking for `uv`) and updates itself accordingly: `caseclerk update` downloads the new release's zip and swaps it into the same install directory in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in, and a leftover-cleanup pass runs at every startup. The install location, PATH entry, Start Menu shortcut, and Desktop toggle shortcuts are all untouched by this — nothing to reinstall, re-download the installer for, or reconfigure; just restart `caseclerk.exe` (or a running `share start`) afterward to pick it up. If a swap ever fails (e.g. offline), the command prints the release page URL as a manual fallback instead of leaving a half-updated install.
+
+The plain `caseclerk-windows-x64.zip` (unzip-and-run, no PATH/Start Menu/uninstaller) is still published alongside the installer for anyone who'd rather not install anything system-registered at all.
 
 ## Roadmap
 
