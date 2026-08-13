@@ -8,26 +8,73 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
+import os
 import sys
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_STD_OUTPUT_HANDLE = -11
+_ATTACH_PARENT_PROCESS = -1
+# GetStdHandle's two different "nothing here" answers: NULL (no handle
+# associated) and INVALID_HANDLE_VALUE (an error retrieving it) -- distinct
+# from each other, and from a real handle, but both mean "not valid".
+# ctypes' c_void_p restype surfaces a non-null pointer as an unsigned
+# Python int (so INVALID_HANDLE_VALUE, all bits set, comes back as a large
+# positive number on a 64-bit process, not literally -1) -- this set covers
+# every representation a testable double might plausibly hand back too.
+_INVALID_STDIO_HANDLES = {0, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF}
+
 
 def _configure_logging(*, level: int = logging.INFO) -> None:
-    logging.basicConfig(level=level)
+    # A console=False frozen build launched with no console and no
+    # redirection can have sys.stderr as None (older PyInstaller
+    # bootloaders) or a dummy/NUL-backed stream (newer ones); either way,
+    # don't depend on exactly which behavior this build's PyInstaller
+    # version has -- logging.basicConfig()'s default StreamHandler would
+    # crash on the very first log call (AttributeError: 'NoneType' object
+    # has no attribute 'write') if it's genuinely None.
+    stream = sys.stderr if sys.stderr is not None else open(os.devnull, "w")  # noqa: SIM115
+    logging.basicConfig(level=level, stream=stream)
+
+
+def _has_valid_stdio_handle(kernel32: Any) -> bool:
+    """True if GetStdHandle(STD_OUTPUT_HANDLE) already returns something
+    real. A console is one such thing, but so -- exactly as valid, and
+    handed to a GUI-subsystem process (console=False) the same as a console
+    one -- is a redirected pipe or file, which is what release.yml's smoke
+    tests give us (`& caseclerk-tray.exe --smoke 2>&1 | Out-String`). Pulled
+    out as its own function so the decision itself is unit-testable via an
+    injected double, independent of the real Win32 call below."""
+    handle = kernel32.GetStdHandle(_STD_OUTPUT_HANDLE)
+    return handle not in _INVALID_STDIO_HANDLES
 
 
 def _attach_console_for_smoke() -> None:
     """caseclerk-tray.exe is built console=False (a normal double-click
     launch must never pop up a console window) -- but `--smoke` is meant to
-    be run from CI's own terminal, which needs to actually see its one
-    status line. AttachConsole(ATTACH_PARENT_PROCESS) + reopening CONOUT$ is
-    the standard Win32 trick a windowed-subsystem executable uses to regain
-    its launching console's stdio without ever allocating a console window
-    of its own. No-op unless frozen+windowed on win32: a dev
-    `uv run caseclerk-tray --smoke` already has a real console attached, and
-    a double-click launch (no console to attach to) stays silent, as
-    intended.
+    be run from CI's own terminal/pipeline, which needs to actually see its
+    one status line.
+
+    Only touches stdio when there is genuinely nowhere valid to write yet
+    (see _has_valid_stdio_handle) -- a real, confirmed release-run bug, twice
+    over: an earlier version of this function called
+    AttachConsole(ATTACH_PARENT_PROCESS) + rebound sys.stdout/sys.stderr to
+    CONOUT$ UNCONDITIONALLY whenever frozen+windowed on win32. In CI, the
+    pwsh host running the step DOES have a console, even though it had
+    redirected OUR stdio into a pipe for its own capture (`2>&1 |
+    Out-String`) -- so AttachConsole "succeeded", and rebinding stdout/stderr
+    to that unrelated console silently abandoned the pipe PowerShell was
+    actually reading, with nothing arriving on the other end. (First
+    surfaced as the status line missing while INFO log noise still arrived,
+    via a since-fixed logging.StreamHandler quirk that had cached the
+    original, still-valid stderr object before the rebind; then, once that
+    noise was silenced, as the captured output being completely empty.)
+    AttachConsole is now only attempted -- and stdout/stderr only rebound to
+    CONOUT$ -- for a genuine double-click (no console, no redirection) or an
+    interactive terminal launch with no redirection either (a real console
+    exists but was never attached, since Windows never auto-attaches one to
+    a GUI-subsystem process).
 
     `ctypes.WinDLL` is accessed via `importlib.import_module` (returning a
     plain module object, typed as ``Any``) rather than a direct
@@ -38,9 +85,16 @@ def _attach_console_for_smoke() -> None:
         return
     ctypes_mod = importlib.import_module("ctypes")
     kernel32 = ctypes_mod.WinDLL("kernel32", use_last_error=True)
-    attach_parent_process = -1
-    if not kernel32.AttachConsole(attach_parent_process):
-        return  # no parent console (e.g. a genuine double-click) -- stay silent
+    # GetStdHandle returns a HANDLE (pointer-sized); without this, ctypes'
+    # default c_int return type would truncate it on 64-bit Windows -- same
+    # class of bug as CreateMutexW's in caseclerk_tray.singleinstance.
+    kernel32.GetStdHandle.restype = ctypes_mod.c_void_p
+
+    if _has_valid_stdio_handle(kernel32):
+        return  # already have somewhere real to write -- leave it alone
+
+    if not kernel32.AttachConsole(_ATTACH_PARENT_PROCESS):
+        return  # no parent console either (e.g. a genuine double-click) -- stay silent
     sys.stdout = open("CONOUT$", "w", encoding="utf-8")  # noqa: SIM115
     sys.stderr = open("CONOUT$", "w", encoding="utf-8")  # noqa: SIM115
 
@@ -71,13 +125,19 @@ def _run_smoke() -> int:
     icon.sharing_off_icon()
     icon.sharing_on_icon()
 
-    print(
+    status_line = (
         f"caseclerk-tray {core_update.current_version()}: "
         f"sharing={'on' if tray_state.sharing_on else 'off'} "
         f"processing_total={tray_state.processing_total} "
         f"failures={tray_state.failure_count} "
         f"menu_items={len(menu_model)}"
     )
+    # Belt-and-braces: emitted on BOTH stdout and stderr. release.yml merges
+    # them (`2>&1`) and only needs the line to appear somewhere in the
+    # combined capture -- if some future Windows console/stream quirk ever
+    # breaks one of the two streams again, the other still gets through.
+    print(status_line)
+    print(status_line, file=sys.stderr)
     return 0
 
 
