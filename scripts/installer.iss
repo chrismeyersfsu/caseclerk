@@ -2,9 +2,16 @@
 ; bundle, for the attorney's machine. Per-user, no UAC, no admin rights --
 ; this is a single-user utility, not something that needs to touch shared
 ; system state. Deliberately does NOT run `init`/`share setup` on its own;
-; the on-site setup visit still runs those by hand (see the README). The
-; only opt-in [Run] action is a read-only diagnostic (CaseClerk-Status.bat,
-; which runs `doctor` + `share status`), unchecked by default.
+; the on-site setup visit can run those from caseclerk-tray.exe's Settings
+; window, or by hand on the command line (see the README). The Start Menu's
+; primary "CaseClerk" shortcut launches the tray app; CaseClerk-Status.bat
+; (runs `doctor` + `share status`) is still there as a read-only diagnostic.
+; the finish page's "Launch CaseClerk" checkbox (checked by default) starts
+; the tray app once install completes; the "start automatically" [Tasks]
+; entry (unchecked by default) writes the same HKCU Run key caseclerk-tray's
+; own Settings > "Start CaseClerk when Windows starts" checkbox does --
+; uninstall always removes that value regardless of which one wrote it, and
+; best-effort taskkills a running caseclerk-tray.exe before removing files.
 ;
 ; Build with (from the repo root, matching release.yml):
 ;   iscc /DMyAppVersion=X.Y.Z scripts\installer.iss
@@ -25,6 +32,7 @@
 #define MyAppName "CaseClerk"
 #define MyAppPublisher "CaseClerk"
 #define MyAppExeName "caseclerk.exe"
+#define MyAppTrayExeName "caseclerk-tray.exe"
 ; Fixed for the lifetime of the app -- changing this would orphan the old
 ; uninstall registration (HKCU\...\Uninstall\{AppId}_is1) instead of letting
 ; a re-run of Setup upgrade/repair the existing install. Braces are baked
@@ -65,15 +73,28 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
+; dist-windows\caseclerk already contains BOTH caseclerk.exe and
+; caseclerk-tray.exe sharing one _internal (see scripts/build_windows.py) --
+; nothing tray-specific needed here beyond that single recursive copy.
 Source: "dist-windows\caseclerk\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "scripts\CaseClerk-Status.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
+Name: "{group}\CaseClerk"; Filename: "{app}\{#MyAppTrayExeName}"; WorkingDir: "{app}"
 Name: "{group}\CaseClerk Status"; Filename: "{app}\CaseClerk-Status.bat"; WorkingDir: "{app}"
 Name: "{group}\CaseClerk folder"; Filename: "{app}"
 Name: "{group}\Uninstall CaseClerk"; Filename: "{uninstallexe}"
 
+[Tasks]
+; Unchecked by default -- same posture as the [Run] diagnostic below: this
+; installer doesn't turn anything automatic on unless asked to.
+Name: "autostart"; Description: "Start CaseClerk automatically when Windows starts"; Flags: unchecked
+
 [Run]
+; Checked by default -- the tray is now the primary interface, so most
+; installs should end with it running. `nowait` since it's a background app
+; that must not block the finish page; skipped entirely in a silent install.
+Filename: "{app}\{#MyAppTrayExeName}"; Description: "Launch CaseClerk"; Flags: postinstall skipifsilent nowait
 ; Opt-in, unchecked, and skipped entirely in a silent install -- doctor and
 ; share status are read-only, but this installer still shouldn't run
 ; anything by default; the setup visit runs its own commands deliberately.
@@ -82,6 +103,11 @@ Filename: "{app}\CaseClerk-Status.bat"; Description: "Run caseclerk doctor"; Fla
 [Code]
 const
   EnvironmentKey = 'Environment';
+  // Must match caseclerk_tray.autostart.RUN_KEY_PATH / VALUE_NAME exactly --
+  // this is the same per-user Run key both the installer's opt-in [Tasks]
+  // entry and the tray app's own Settings checkbox write.
+  AutostartRunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  AutostartValueName = 'CaseClerk';
 
 // Adds {app} to HKCU's PATH, de-duplicating against an existing entry from
 // a previous install/repair (case-insensitive, like Windows' own PATH
@@ -155,11 +181,40 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     EnvAddPath(ExpandConstant('{app}'));
+    // Same HKCU Run key caseclerk-tray's own Settings > "Start CaseClerk
+    // when Windows starts" checkbox writes (caseclerk_tray.autostart) --
+    // checking this [Tasks] entry here and toggling that checkbox later
+    // converge on the exact same registry value.
+    if WizardIsTaskSelected('autostart') then
+      RegWriteStringValue(HKEY_CURRENT_USER, AutostartRunKey, AutostartValueName,
+        '"' + ExpandConstant('{app}\{#MyAppTrayExeName}') + '"');
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
 begin
+  if CurUninstallStep = usUninstall then
+  begin
+    // Best-effort: fires before Inno removes any files. A running tray icon
+    // holds no file locks that would actually block uninstall (this is a
+    // per-user install, nothing DLL-mapped exclusively), but leaving it
+    // running through an uninstall is a bad experience -- its Start Menu
+    // entry and install directory vanish while its icon lingers in the
+    // notification area. /F force-kills; a nonzero exit (e.g. it simply
+    // isn't running) is not an error worth surfacing here.
+    Exec('taskkill.exe', '/IM {#MyAppTrayExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
   if CurUninstallStep = usPostUninstall then
+  begin
     EnvRemovePath(ExpandConstant('{app}'));
+    // Removed unconditionally, not just when the [Tasks] entry wrote it --
+    // the tray app's own Settings checkbox can also have enabled autostart
+    // after install, and uninstall must not leave that key pointing at a
+    // now-deleted exe either way.
+    RegDeleteValue(HKEY_CURRENT_USER, AutostartRunKey, AutostartValueName);
+  end;
 end;

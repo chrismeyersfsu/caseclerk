@@ -36,6 +36,11 @@ jobs:
     with:
       package: caseclerk-fixtures
 
+  verify-tray:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-tray
+
   verify-e2e:
     uses: ./.github/workflows/e2e.yml
 
@@ -46,6 +51,7 @@ jobs:
       - verify-artifacts
       - verify-mcp
       - verify-cli
+      - verify-tray
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,6 +97,16 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
+      - name: Smoke test -- caseclerk-tray.exe --smoke
+        run: |
+          $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config-tray"
+          $env:CASECLERK_DATA_DIR = "$PWD\smoke-data-tray"
+          $output = & "dist-windows\caseclerk\caseclerk-tray.exe" --smoke 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw "caseclerk-tray.exe --smoke exited $LASTEXITCODE`n$output" }
+          if ($output -notmatch "^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
+          if ($output -match "Traceback") { throw "caseclerk-tray.exe --smoke crashed:`n$output" }
+
       - name: Upload Windows package artifact
         uses: actions/upload-artifact@v4
         with:
@@ -123,8 +139,11 @@ jobs:
           $setupPath = (Resolve-Path "dist-installer\CaseClerk-Setup-$version.exe").Path
           $installDir = Join-Path $PWD "smoke-install"
 
+          # /TASKS="autostart" selects the (unchecked-by-default) "start
+          # automatically" task explicitly, so this run also exercises the
+          # HKCU Run key write path, not just its removal on uninstall below.
           $proc = Start-Process -FilePath $setupPath -ArgumentList @(
-            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`""
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`"", "/TASKS=`"autostart`""
           ) -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "silent install failed with exit $($proc.ExitCode)" }
 
@@ -143,6 +162,25 @@ jobs:
             throw "install dir was not added to the user PATH registry value"
           }
           Write-Host "PATH updated correctly: $installDir is present"
+
+          $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+          $runValue = (Get-ItemProperty -Path $runKey -Name "CaseClerk" -ErrorAction SilentlyContinue).CaseClerk
+          if (-not $runValue) { throw "HKCU Run value 'CaseClerk' was not written by the autostart task" }
+          if ($runValue -notlike "*caseclerk-tray.exe*") { throw "unexpected autostart Run value: $runValue" }
+          Write-Host "Autostart Run value written correctly: $runValue"
+
+      - name: Smoke test -- caseclerk-tray.exe --smoke (installed)
+        run: |
+          $installDir = Join-Path $PWD "smoke-install"
+          $exePath = Join-Path $installDir "caseclerk-tray.exe"
+          if (-not (Test-Path $exePath)) { throw "caseclerk-tray.exe not found at $exePath after silent install" }
+
+          $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config-tray-installed"
+          $env:CASECLERK_DATA_DIR = "$PWD\smoke-data-tray-installed"
+          $output = & $exePath --smoke 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw "installed caseclerk-tray.exe --smoke exited $LASTEXITCODE`n$output" }
+          if ($output -notmatch "^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
 
       - name: Smoke test -- silent uninstall
         run: |
@@ -166,11 +204,21 @@ jobs:
           $exePath = Join-Path $installDir "caseclerk.exe"
           if (Test-Path $exePath) { throw "caseclerk.exe still present after silent uninstall" }
 
+          $trayExePath = Join-Path $installDir "caseclerk-tray.exe"
+          if (Test-Path $trayExePath) { throw "caseclerk-tray.exe still present after silent uninstall" }
+
           $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
           if ($userPath -like "*$installDir*") {
             throw "install dir still present in the user PATH registry value after uninstall"
           }
-          Write-Host "Silent uninstall verified: files removed, PATH cleaned up"
+
+          $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+          $runValue = (Get-ItemProperty -Path $runKey -Name "CaseClerk" -ErrorAction SilentlyContinue).CaseClerk
+          if ($runValue) {
+            throw "HKCU Run value 'CaseClerk' still present after silent uninstall: $runValue"
+          }
+
+          Write-Host "Silent uninstall verified: files removed, PATH cleaned up, autostart Run value removed"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -187,6 +235,7 @@ jobs:
       - verify-mcp
       - verify-cli
       - verify-fixtures
+      - verify-tray
       - verify-e2e
       - package-windows
     runs-on: ubuntu-latest
