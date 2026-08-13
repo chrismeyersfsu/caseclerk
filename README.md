@@ -6,6 +6,7 @@
 [![checks-mcp](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-mcp.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-mcp.yml)
 [![checks-cli](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-cli.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-cli.yml)
 [![checks-fixtures](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-fixtures.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-fixtures.yml)
+[![checks-tray](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-tray.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/checks-tray.yml)
 [![e2e](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/chrismeyersfsu/caseclerk/actions/workflows/e2e.yml)
 
 CaseClerk is an [MCP](https://modelcontextprotocol.io) server for a small law firm's case files. It lets an MCP host (Claude Desktop, Claude Code, or any other MCP client) read and search the documents for exactly one client and case at a time, and draft an Outlook-ready email into that case's folder — never mixing clients, never touching anything outside the case it was asked about. Everything else — chat, dictation, model choice, session history — is left to the host; CaseClerk only builds what is specific to running a law practice's document folder.
@@ -69,6 +70,20 @@ CaseClerk speaks plain MCP over stdio — the command any host needs is `casecle
 | `caseclerk audit [--limit N]` | Show the most recent HTTP-transport tool calls (stdio never writes these) |
 
 During development, run any of these as `uv run caseclerk <command>` from the repo root instead of installing.
+
+## The tray app
+
+On Windows, installing CaseClerk also gets you `caseclerk-tray.exe`: an icon that lives in the bottom-right notification area and a GUI for everything the CLI reference above covers from a terminal. It's the primary way to use CaseClerk day to day — the CLI is still there underneath (and still what any automation should call), but nobody should need a terminal for routine status checks or settings changes.
+
+- **The icon** is a plain document glyph — gray when sharing is off, green when it's on — so sharing status is visible at a glance without opening anything.
+- **The menu** (click the icon) shows sharing status and processing counts as plain text, then: **Start/Stop Sharing**, **Status...**, **Settings...**, **Audit Log...**, a **"Start CaseClerk when Windows starts"** checkbox, **Check for Updates...**, and **Quit**. A **"Restart to Apply Update"** item appears once a newer version has been downloaded and swapped into place, ready to take effect on restart.
+- **Status** shows the sharing toggle, processing/failure counts, a table of current failures, and the installed version.
+- **Settings** covers everything `caseclerk config` does, from a form: `documentsRoot` (with a folder picker), `emailsFolderName`, the email file name template, processing concurrency, the read-only share hostname/port, and the "start on login" checkbox. It also has a **Remote sharing setup** section that runs the exact same non-interactive tunnel setup as `caseclerk share setup --credentials/--hostname` (see [Remote access](#remote-access-chatgpt) below) — one implementation, two front ends: browse to the tunnel credentials JSON, type the hostname, click **Set up sharing** (or **Reconfigure...** once it's already configured), and the result — success or a specific validation error, plus the resulting public URL — shows inline, right in the window.
+- **Audit Log** lists recent remote-request activity, the same data as `caseclerk audit`.
+- **Closing any of these windows never quits the app.** They're just windows; the tray icon and any sharing session keep running regardless. **Quit** is the only way to exit, and if sharing is currently on, it asks first: Yes stops sharing and quits, No quits but leaves sharing running, Cancel does nothing.
+- **Startup on login** is opt-in either way: the installer's "start automatically" checkbox, or the Settings window's own checkbox — both write (and remove) the same registry value, so toggling either one is reflected in the other.
+
+The Desktop "CaseClerk Sharing ON/OFF" shortcuts from `caseclerk share shortcuts` still work exactly as before; the tray is just the primary, always-visible switch now.
 
 ## Configuration
 
@@ -188,11 +203,19 @@ This resolves/downloads cloudflared, installs the credentials into CaseClerk's d
 
 ### Add the connector in ChatGPT (either option)
 
-```sh
-caseclerk share start
-```
+Setup is **web-only**, on chatgpt.com in a browser — the ChatGPT desktop app can't do this part. Requires a Pro, Plus, Business, Enterprise, or Edu plan.
 
-This prints the public URL (`https://caseclerk.yourdomain.com/mcp`). In ChatGPT: **Settings → Apps & Connectors → Advanced settings → Developer mode**, then create a connector with that URL and **OAuth** authentication. ChatGPT registers itself automatically (dynamic client registration) and completes an authorization-code + PKCE exchange against CaseClerk's own embedded authorization server — there's no login screen to click through on CaseClerk's side; the security boundary is the tunnel itself being off by default.
+**One-time, per ChatGPT account:**
+
+1. **Start sharing first.** ChatGPT contacts the MCP URL while you add the connector, so the tunnel needs to already be up:
+   ```sh
+   caseclerk share start
+   ```
+   This prints the public URL (`https://caseclerk.yourdomain.com/mcp`).
+2. On chatgpt.com: **Settings → Security and login**, and turn on **Developer mode**.
+3. In that same settings area's apps/connectors list, click **+** to create a developer-mode app: give it a name, paste in the MCP URL from step 1, and choose **OAuth** authentication. ChatGPT registers itself automatically (dynamic client registration) and completes an authorization-code + PKCE exchange against CaseClerk's own embedded authorization server — there's no login screen to click through on CaseClerk's side; the security boundary is the tunnel itself being off by default.
+
+**Per conversation**, once the app exists: open the composer's **+** menu → **Developer mode**, enable CaseClerk for that conversation, and prompt explicitly the first time (e.g. "Use CaseClerk's search tool to find the Smith deposition").
 
 **(Optional, Windows only) Create toggle shortcuts:**
 
@@ -226,16 +249,21 @@ The "CaseClerk Sharing ON/OFF" Desktop shortcuts from `share shortcuts` above co
 The attorney's daily driver is the ChatGPT app, not Claude Desktop, so his machine doesn't need Python, uv, or a terminal habit — just `CaseClerk-Setup.exe`, a real (if unsigned) Windows installer. The Cloudflare-account steps (login, `tunnel create`, DNS route — Option A above, steps 1–2) happen ahead of time, at home, on the developer's own machine, which produces a tunnel credentials JSON file; the on-site visit itself never touches Cloudflare's login flow:
 
 1. **At home:** run Option A's steps 1–2 above on your own machine, and keep the resulting `<tunnel-id>.json` credentials file handy (e.g. on a USB stick).
-2. **On site: download and run the installer.** Grab `CaseClerk-Setup-<version>.exe` from the [latest release](https://github.com/chrismeyersfsu/caseclerk/releases/latest) and run it. Windows SmartScreen will likely flag it ("Windows protected your PC") since it isn't code-signed — click **More info → Run anyway**. The installer itself needs no admin/UAC prompt (it installs per-user, to `%LOCALAPPDATA%\Programs\CaseClerk`) and doesn't run `init`/`share setup`/anything else on its own; it just puts `caseclerk.exe` on disk, adds it to your **user** PATH (so any *new* PowerShell/terminal window can just run `caseclerk`, no `cd`-ing into an install folder first), adds a Start Menu "CaseClerk Status" shortcut (runs `doctor` + `share status`, for a quick health check any time), and registers a normal uninstaller under Settings → Apps.
-3. **On site: open a (new) PowerShell window** — new, so it picks up the PATH change — **and run the entire non-interactive setup:**
-   ```powershell
-   caseclerk init --yes
-   caseclerk share setup --credentials <path-to-tunnel-id.json> --hostname caseclerk.yourdomain.com
-   caseclerk share shortcuts
-   ```
-   That's the whole visit — no browser, no Cloudflare login, nothing typed into a Cloudflare prompt on this machine. `share setup` prints a verification pass at the end confirming the binary, credentials, and config.yml all landed where `share start` expects them.
-4. **Start it and add the connector in ChatGPT** — same as "Add the connector in ChatGPT" above, using `caseclerk share start`.
-5. **Auto-update.** `caseclerk.exe` knows it's a packaged binary (`caseclerk doctor` reports "running as a packaged binary" rather than checking for `uv`) and updates itself accordingly: `caseclerk update` downloads the new release's zip and swaps it into the same install directory in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in, and a leftover-cleanup pass runs at every startup. The install location, PATH entry, Start Menu shortcut, and Desktop toggle shortcuts are all untouched by this — nothing to reinstall, re-download the installer for, or reconfigure; just restart `caseclerk.exe` (or a running `share start`) afterward to pick it up. If a swap ever fails (e.g. offline), the command prints the release page URL as a manual fallback instead of leaving a half-updated install.
+2. **On site: download and run the installer.** Grab `CaseClerk-Setup-<version>.exe` from the [latest release](https://github.com/chrismeyersfsu/caseclerk/releases/latest) and run it. Windows SmartScreen will likely flag it ("Windows protected your PC") since it isn't code-signed — click **More info → Run anyway**. The installer itself needs no admin/UAC prompt (it installs per-user, to `%LOCALAPPDATA%\Programs\CaseClerk`) and doesn't run `init`/`share setup`/anything else on its own; it just puts `caseclerk.exe` and `caseclerk-tray.exe` on disk, adds the install dir to your **user** PATH (so any *new* PowerShell/terminal window can just run `caseclerk`, no `cd`-ing into an install folder first), adds Start Menu shortcuts ("CaseClerk" launches the tray; "CaseClerk Status" runs `doctor` + `share status` for a quick text health check), registers a normal uninstaller under Settings → Apps, and offers two checkboxes: an unchecked-by-default **"Start CaseClerk automatically when Windows starts"** task, and a checked-by-default **"Launch CaseClerk"** on the finish page (both are exactly what the tray's own Settings window and Start Menu shortcut do — nothing installer-specific to undo later if you change your mind).
+3. **On site: finish setup — from the tray GUI (recommended) or the command line.** Either way is the same underlying code (`caseclerk_cli.share.setup_credentials`); pick whichever's more comfortable at the keyboard:
+   - **GUI:** the tray icon should already be running (from the finish-page checkbox, or launch "CaseClerk" from the Start Menu). Right-click it → **Settings...**, set `documentsRoot` via **Browse...**, then in the **Remote sharing setup** section: **Browse...** to `<path-to-tunnel-id.json>`, type `caseclerk.yourdomain.com` as the hostname, and click **Set up sharing**. Success (or a specific validation error) and the resulting public URL show inline, right in the window. Also check the **"Start CaseClerk when Windows starts"** box in Settings if this machine should stay ready across reboots without a manual relaunch. Then use the tray menu's **Start Sharing**.
+   - **Command line:** open a (new) PowerShell window — new, so it picks up the PATH change — and run:
+     ```powershell
+     caseclerk init --yes
+     caseclerk share setup --credentials <path-to-tunnel-id.json> --hostname caseclerk.yourdomain.com
+     caseclerk share shortcuts
+     caseclerk share start
+     ```
+     `share setup` prints a verification pass at the end confirming the binary, credentials, and config.yml all landed where `share start` expects them.
+
+   Either path: no browser, no Cloudflare login, nothing typed into a Cloudflare prompt on this machine — that part happened at home in step 1.
+4. **Add the connector in ChatGPT** — see [Add the connector in ChatGPT](#add-the-connector-in-chatgpt-either-option) above (web-only, on chatgpt.com); sharing has to already be started (previous step) before that page will accept the URL.
+5. **Auto-update.** Both `caseclerk.exe` and `caseclerk-tray.exe` know they're a packaged binary (`caseclerk doctor` reports "running as a packaged binary" rather than checking for `uv`; the tray's menu shows "Check for Updates...") and update the same way: download the new release's zip and swap it into the shared install directory in place — Windows won't let a running program overwrite its own files, so the swap renames the current ones aside and moves the new ones in (both executables and their shared support files at once), and a leftover-cleanup pass runs at every startup. Once a swap has landed, the tray menu shows **"Restart to Apply Update"**, which relaunches it for you. The install location, PATH entry, Start Menu shortcuts, and Desktop toggle shortcuts are all untouched by this — nothing to reinstall, re-download the installer for, or reconfigure; just restart (or click "Restart to Apply Update") to pick it up. If a swap ever fails (e.g. offline), `caseclerk update` prints the release page URL as a manual fallback instead of leaving a half-updated install.
 
 The plain `caseclerk-windows-x64.zip` (unzip-and-run, no PATH/Start Menu/uninstaller) is still published alongside the installer for anyone who'd rather not install anything system-registered at all.
 
