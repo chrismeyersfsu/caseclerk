@@ -18,9 +18,11 @@ on:
       - ".github/workflows/e2e.yml"
   # lets release.yml reuse this exact job instead of duplicating it
   workflow_call: {}
-  # TEMPORARY: lets us fire repeated manual runs to confirm the windows-latest
-  # sqlite3.OperationalError flake (db.py's connect() retry) is actually
-  # fixed, via `gh workflow run e2e.yml` in a loop. Remove once confirmed.
+  # `gh workflow run e2e.yml` on demand -- useful for confirming a fix (or a
+  # suspected flake) on all three OSes without needing a throwaway push.
+  # Added while chasing the windows-latest sqlite3.OperationalError flake
+  # fixed by db.py's connect() retry; kept since it's a harmless, standard
+  # capability to have, not removed after that investigation closed.
   workflow_dispatch: {}
 
 jobs:
