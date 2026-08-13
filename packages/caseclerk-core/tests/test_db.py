@@ -312,3 +312,98 @@ def test_remote_requests_respects_limit(conn: sqlite3.Connection) -> None:
     for i in range(5):
         db.insert_remote_request(conn, tool=f"tool-{i}", args_summary=None, ok=True, error=None)
     assert len(db.list_remote_requests(conn, limit=2)) == 2
+
+
+# --- connect() retry on a transient sqlite3.OperationalError (Windows: a raw
+# disk I/O error, not the SQLITE_BUSY that PRAGMA busy_timeout already
+# covers, briefly surfacing right after another process holding the same
+# WAL-mode db exits -- see db.connect()'s docstring) ---
+
+
+def test_connect_retries_when_opening_fails_transiently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(db, "_CONNECT_RETRY_DELAY_SECONDS", 0.0)
+    real_connect = db.sqlite3.connect
+    calls = {"count": 0}
+
+    def _flaky_connect(database: str, timeout: float = 5.0) -> sqlite3.Connection:
+        calls["count"] += 1
+        if calls["count"] <= 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_connect(database, timeout=timeout)
+
+    monkeypatch.setattr(db.sqlite3, "connect", _flaky_connect)
+
+    conn = db.connect(tmp_path / "test.db")
+    try:
+        assert calls["count"] == 3  # failed twice, succeeded on the third attempt
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_connect_retries_when_migrate_fails_transiently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A later step in the sequence (not just the initial sqlite3.connect()
+    # call) failing transiently is retried too -- each attempt reopens a
+    # fresh connection rather than reusing one that failed mid-setup.
+    monkeypatch.setattr(db, "_CONNECT_RETRY_DELAY_SECONDS", 0.0)
+    real_migrate = db._migrate
+    calls = {"count": 0}
+
+    def _flaky_migrate(conn: sqlite3.Connection) -> None:
+        calls["count"] += 1
+        if calls["count"] <= 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        real_migrate(conn)
+
+    monkeypatch.setattr(db, "_migrate", _flaky_migrate)
+
+    conn = db.connect(tmp_path / "test.db")
+    try:
+        assert calls["count"] == 3
+        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        assert row is not None  # the winning attempt's migration actually landed
+    finally:
+        conn.close()
+
+
+def test_connect_raises_after_exhausting_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(db, "_CONNECT_RETRY_DELAY_SECONDS", 0.0)
+    calls = {"count": 0}
+
+    def _always_fails(*args: object, **kwargs: object) -> sqlite3.Connection:
+        calls["count"] += 1
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(db.sqlite3, "connect", _always_fails)
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        db.connect(tmp_path / "test.db")
+
+    # bounded -- not an infinite retry loop
+    assert calls["count"] == db._CONNECT_RETRY_ATTEMPTS
+
+
+def test_connect_does_not_retry_a_different_error_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only sqlite3.OperationalError (the class actually observed for this
+    # transient condition) is retried -- a different sqlite3 error (e.g. a
+    # real constraint/integrity problem) must surface immediately, not be
+    # masked behind several seconds of pointless retrying.
+    monkeypatch.setattr(db, "_CONNECT_RETRY_DELAY_SECONDS", 0.0)
+    calls = {"count": 0}
+
+    def _wrong_error(*args: object, **kwargs: object) -> sqlite3.Connection:
+        calls["count"] += 1
+        raise sqlite3.IntegrityError("constraint failed")
+
+    monkeypatch.setattr(db.sqlite3, "connect", _wrong_error)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.connect(tmp_path / "test.db")
+
+    assert calls["count"] == 1

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,12 @@ from caseclerk_core.models import (
 logger = logging.getLogger(__name__)
 
 DB_FILE_NAME = "caseclerk.db"
+
+# Opening the connection (and its initial PRAGMAs) is retried a bounded
+# number of times on a transient sqlite3.OperationalError -- see connect()'s
+# docstring. Module-level so tests can monkeypatch the delay to 0.
+_CONNECT_RETRY_ATTEMPTS = 5
+_CONNECT_RETRY_DELAY_SECONDS = 0.2
 
 _SCHEMA_V1 = """
 CREATE TABLE clients (
@@ -204,16 +211,50 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
-    """Open (creating and migrating if needed) the caseclerk database."""
+    """Open (creating and migrating if needed) the caseclerk database.
+
+    Opening the connection and running its initial PRAGMAs/migration is
+    retried a bounded number of times on a transient sqlite3.OperationalError.
+    Windows in particular can briefly surface a raw disk I/O error -- not the
+    SQLITE_BUSY that ``PRAGMA busy_timeout`` already covers -- right after
+    another process holding the same WAL-mode db exits (observed in CI
+    immediately after killing the HTTP-transport e2e test's server process;
+    most likely Windows Defender or similar scanning the just-closed file
+    before releasing it). Each attempt opens a fresh connection rather than
+    retrying statements on a connection that already failed mid-setup.
+    Bounded and logged, never silent: a real, persistent error (corruption,
+    permissions) still surfaces once the attempts are exhausted.
+    """
     target = Path(path) if path is not None else db_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(target), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    conn.execute("PRAGMA foreign_keys = ON")
-    _migrate(conn)
-    return conn
+
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(1, _CONNECT_RETRY_ATTEMPTS + 1):
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(str(target), timeout=30.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 30000")
+            conn.execute("PRAGMA foreign_keys = ON")
+            _migrate(conn)
+            return conn
+        except sqlite3.OperationalError as exc:
+            if conn is not None:
+                conn.close()
+            last_exc = exc
+            if attempt == _CONNECT_RETRY_ATTEMPTS:
+                break
+            logger.warning(
+                "transient error opening database (attempt %d/%d), retrying: %s",
+                attempt,
+                _CONNECT_RETRY_ATTEMPTS,
+                exc,
+            )
+            time.sleep(_CONNECT_RETRY_DELAY_SECONDS)
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def _now_iso() -> str:
