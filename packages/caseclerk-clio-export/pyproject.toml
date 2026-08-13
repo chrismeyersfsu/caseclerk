@@ -1,6 +1,6 @@
 [project]
 name = "caseclerk-clio-export"
-version = "0.1.0"
+version = "0.5.0"
 description = "Export contacts and matters from Clio Manage via the v4 REST API."
 requires-python = ">=3.11"
 authors = [{ name = "chrismeyersfsu" }]
