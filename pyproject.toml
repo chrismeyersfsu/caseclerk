@@ -48,6 +48,7 @@ known-first-party = [
     "caseclerk_mcp",
     "caseclerk_cli",
     "caseclerk_fixtures",
+    "caseclerk_tray",
 ]
 
 [tool.ruff.format]
@@ -60,7 +61,7 @@ warn_unused_ignores = true
 warn_return_any = false
 disallow_untyped_defs = true
 no_implicit_reexport = false
-mypy_path = "packages/caseclerk-core/src:packages/caseclerk-pipeline/src:packages/caseclerk-artifacts/src:packages/caseclerk-mcp/src:packages/caseclerk-cli/src:packages/caseclerk-fixtures/src"
+mypy_path = "packages/caseclerk-core/src:packages/caseclerk-pipeline/src:packages/caseclerk-artifacts/src:packages/caseclerk-mcp/src:packages/caseclerk-cli/src:packages/caseclerk-fixtures/src:packages/caseclerk-tray/src"
 explicit_package_bases = true
 # Every package's tests/ is its own root (no __init__.py, by design -- see the stage-1
 # scaffold commit), so two packages both naming a fixture file "conftest.py" compute the
@@ -83,4 +84,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "docx.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pystray.*"
 ignore_missing_imports = true

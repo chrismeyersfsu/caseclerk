@@ -347,6 +347,100 @@ def test_share_start_stop_status_lifecycle(
     assert "not running" in stop_again.output
 
 
+# --- Library entry points (share.start_sharing/stop_sharing/is_running/
+# setup_credentials): these are what caseclerk-tray calls directly, with no
+# typer/CliRunner involved -- the CLI-command-level tests above already cover
+# the same underlying behavior end to end through `caseclerk share ...`, so
+# these focus specifically on the plain-function return values a non-CLI
+# caller (the tray) depends on.
+
+
+def test_setup_credentials_direct_call_returns_structured_outcome(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary_path = isolated_env / "cloudflared"
+    binary_path.write_text("fake binary")
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", lambda **kwargs: binary_path)
+
+    creds = _write_fake_credentials(isolated_env, tunnel_id="tunnel-direct")
+    outcome = share_module.setup_credentials(creds, hostname="direct.example.com")
+
+    assert outcome.ok is True
+    assert outcome.tunnel_id == "tunnel-direct"
+    assert outcome.hostname == "direct.example.com"
+    assert outcome.tunnel_name == "caseclerk"  # ShareConfig's default, since none was passed
+    assert outcome.public_url == "https://direct.example.com/mcp"
+    assert outcome.binary_path == binary_path
+    assert outcome.credentials_path is not None and outcome.credentials_path.is_file()
+    assert outcome.config_path is not None and outcome.config_path.is_file()
+
+    from caseclerk_core.config import load_config
+
+    assert load_config().share.hostname == "direct.example.com"
+
+
+def test_setup_credentials_direct_call_empty_hostname_never_touches_cloudflared(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_called(**kwargs: object) -> Path:
+        raise AssertionError("resolve() must not run before the hostname is even validated")
+
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", _fail_if_called)
+    creds = _write_fake_credentials(isolated_env)
+
+    outcome = share_module.setup_credentials(creds, hostname="   ")
+    assert outcome.ok is False
+    assert "hostname" in outcome.message.lower()
+
+
+def test_setup_credentials_direct_call_accepts_a_pre_resolved_binary(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI passes an already-resolved `binary=` (it needs cloudflared.resolve()
+    for its own "cloudflared ready" report first); the tray's Settings window
+    doesn't, so setup_credentials must resolve one itself when `binary` is
+    omitted -- both call paths are exercised here."""
+    binary_path = isolated_env / "cloudflared"
+    binary_path.write_text("fake binary")
+    resolve_calls: list[None] = []
+
+    def _fail_if_called(**kwargs: object) -> Path:
+        resolve_calls.append(None)
+        raise AssertionError("resolve() must not be called when a pre-resolved binary= is supplied")
+
+    monkeypatch.setattr(share_module.cloudflared_module, "resolve", _fail_if_called)
+
+    creds = _write_fake_credentials(isolated_env)
+    outcome = share_module.setup_credentials(creds, hostname="pre-resolved.example.com", binary=binary_path)
+
+    assert outcome.ok is True
+    assert resolve_calls == []  # resolve() was never called -- the pre-resolved binary was used as-is
+
+
+def test_library_start_stop_is_running_without_a_cli_runner(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
+) -> None:
+    """caseclerk-tray calls these three functions directly (no typer, no
+    CliRunner) -- this exercises exactly that call shape."""
+    from caseclerk_core.config import load_config, save_config
+
+    cfg = load_config().model_copy(update={"share": load_config().share.model_copy(update={"hostname": "x"})})
+    save_config(cfg)
+    monkeypatch.setattr(
+        share_module.cloudflared_module, "resolve", lambda **kwargs: Path("/usr/bin/cloudflared")
+    )
+
+    assert share_module.is_running() is False
+
+    start_outcome = share_module.start_sharing()
+    assert start_outcome.ok is True
+    assert share_module.is_running() is True
+
+    stop_outcome = share_module.stop_sharing()
+    assert stop_outcome.ok is True
+    assert share_module.is_running() is False
+
+
 def test_share_status_shows_recent_audit_entries(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch, fake_spawn: None
 ) -> None:

@@ -158,6 +158,21 @@ def cleanup_stale_files(target_dir: Path | None = None) -> int:
     return removed
 
 
+def has_staged_update(target_dir: Path | None = None) -> bool:
+    """True if a previous swap left `.old`-suffixed entries behind that
+    `cleanup_stale_files` hasn't removed yet -- i.e. a newer build is already
+    in place in `target_dir` and merely needs the process restarted to pick
+    it up. This is the signal caseclerk-tray's polling loop uses to show
+    "Restart to apply update": the swap in `apply_binary_update` already
+    happened by the time it returns `ok=True`, so there is no separate
+    "staged but not yet swapped" state to track -- presence of `.old` files
+    IS "staged"."""
+    directory = target_dir if target_dir is not None else install_dir()
+    if not directory.is_dir():
+        return False
+    return any(entry.name.endswith(_OLD_SUFFIX) for entry in directory.iterdir())
+
+
 def _update_windows_uninstall_metadata(version_tag: str, *, winreg_module: Any = None) -> None:
     """Best-effort: after a successful swap, refresh the DisplayVersion (and
     DisplayName, which embeds it -- Inno Setup's default AppVerName is "Name
