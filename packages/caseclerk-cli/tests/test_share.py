@@ -45,6 +45,21 @@ def fake_spawn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(share_module, "_spawn", _fake_spawn)
 
 
+def test_caseclerk_binary_resolves_regardless_of_how_it_was_launched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # sys.executable is always an already-absolute path by the time Python
+    # sees it (Windows resolves PATH lookups/shortcut targets before exec),
+    # but _caseclerk_binary() still calls .resolve() defensively, matching
+    # binary_update.install_dir()'s pattern -- compare against an equally
+    # resolved tmp_path, not a hand-written string (see the Windows CI bug
+    # this exact mistake caused for install_dir()'s own test).
+    exe_path = tmp_path / "caseclerk.exe"
+    monkeypatch.setattr(sys, "executable", str(exe_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert share_module._caseclerk_binary() == tmp_path.resolve() / "caseclerk.exe"
+
+
 def test_share_start_requires_hostname_configured(
     runner: CliRunner, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

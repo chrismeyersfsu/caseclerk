@@ -38,9 +38,14 @@ def _pidfile_path() -> Path:
 
 
 def _caseclerk_binary() -> Path:
-    venv_bin = Path(sys.executable).parent
+    # .resolve() so this is robust to how caseclerk was launched -- via PATH,
+    # a Desktop/Start Menu shortcut, or a direct path all leave sys.executable
+    # as an already-absolute path (Windows resolves it before exec either
+    # way), but resolving normalizes away any `.`/`..` segments too, matching
+    # binary_update.install_dir()'s same defensive pattern.
+    bin_dir = Path(sys.executable).resolve().parent
     name = "caseclerk.exe" if sys.platform == "win32" else "caseclerk"
-    return venv_bin / name
+    return bin_dir / name
 
 
 def _read_state() -> dict[str, object] | None:
