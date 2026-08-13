@@ -27,7 +27,15 @@ from caseclerk_pipeline.extractors.registry import get_extractor, is_unsupported
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STALE_MINUTES = 30
+# How long a claimed-but-never-completed job (e.g. its worker process crashed
+# -- exactly what the BrokenProcessPool bug did on Windows before
+# multiprocessing.freeze_support() was added to the frozen entry scripts)
+# sits stuck before reclaim_stale_jobs resets it back to queued. 30 minutes
+# was too long for interactive desktop use -- a user watching `caseclerk
+# process`/the tray after a crash shouldn't have to wait that long for a
+# handful of documents to become reprocessable. No legitimate single-document
+# extraction should realistically approach even this shorter window.
+DEFAULT_STALE_MINUTES = 5
 DEFAULT_JOB_KIND = "process"
 
 

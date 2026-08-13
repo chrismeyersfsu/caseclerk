@@ -13,8 +13,8 @@ import sys
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging() -> None:
-    logging.basicConfig(level=logging.INFO)
+def _configure_logging(*, level: int = logging.INFO) -> None:
+    logging.basicConfig(level=level)
 
 
 def _attach_console_for_smoke() -> None:
@@ -90,7 +90,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    _configure_logging()
+    # --smoke's one printed status line is what release.yml's CI asserts on
+    # (stdout+stderr merged via `2>&1`) -- routine INFO noise (e.g. db.py's
+    # migration log lines, guaranteed on the fresh data dir CI always smoke-
+    # tests against) must never precede or interleave with it, so smoke mode
+    # raises the root logging level to WARNING before any db work happens.
+    # Normal tray runs keep INFO (useful for anyone capturing its logs).
+    _configure_logging(level=logging.WARNING if args.smoke else logging.INFO)
 
     if args.smoke:
         return _run_smoke()

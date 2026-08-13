@@ -97,6 +97,43 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
+      - name: Smoke test -- caseclerk.exe process at concurrency 2 (ProcessPoolExecutor)
+        run: |
+          # Regression coverage: `caseclerk process` (default concurrency 2)
+          # crashed on a real Windows machine with BrokenProcessPool +
+          # "[PYI-3812] Failed to execute script '_pyinstaller_entry'" --
+          # multiprocessing's spawn start method re-executes the frozen exe to
+          # bootstrap each worker, and the entry script never called
+          # multiprocessing.freeze_support() (fixed in
+          # scripts/_pyinstaller_entry.py). `--concurrency 1` (the inline,
+          # no-pool path) was unaffected, which is exactly why this needs its
+          # own check at concurrency >= 2, not just doctor/--version above.
+          $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config-process"
+          $env:CASECLERK_DATA_DIR = "$PWD\smoke-data-process"
+          $docsRoot = Join-Path $PWD "smoke-docs"
+          $env:CASECLERK_DOCUMENTS_ROOT = $docsRoot
+
+          New-Item -ItemType Directory -Force -Path "$docsRoot\Acme Corp\24-001" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$docsRoot\Beta LLC\24-002" | Out-Null
+          Set-Content -Path "$docsRoot\Acme Corp\24-001\intake-note.txt" -Value "Initial intake notes for Acme Corp, case 24-001."
+          Set-Content -Path "$docsRoot\Beta LLC\24-002\memo.txt" -Value "Case memo for Beta LLC, case 24-002."
+
+          $processOutput = & "dist-windows\caseclerk\caseclerk.exe" process --concurrency 2 2>&1 | Out-String
+          Write-Host $processOutput
+          if ($LASTEXITCODE -ne 0) { throw "caseclerk.exe process --concurrency 2 exited $LASTEXITCODE`n$processOutput" }
+          if ($processOutput -match "Traceback") { throw "caseclerk.exe process crashed:`n$processOutput" }
+
+          $statusOutput = & "dist-windows\caseclerk\caseclerk.exe" status 2>&1 | Out-String
+          Write-Host $statusOutput
+          if ($LASTEXITCODE -ne 0) { throw "caseclerk.exe status exited $LASTEXITCODE`n$statusOutput" }
+          if ($statusOutput -match "(?m)^\s*indexed:\s*(\d+)") {
+            $indexedCount = [int]$Matches[1]
+          } else {
+            throw "status output did not include an 'indexed' line:`n$statusOutput"
+          }
+          if ($indexedCount -le 0) { throw "expected indexed > 0 after processing, got $indexedCount`n$statusOutput" }
+          Write-Host "Confirmed: $indexedCount document(s) indexed via ProcessPoolExecutor (concurrency 2)"
+
       - name: Smoke test -- caseclerk-tray.exe --smoke
         run: |
           $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config-tray"
@@ -104,7 +141,13 @@ jobs:
           $output = & "dist-windows\caseclerk\caseclerk-tray.exe" --smoke 2>&1 | Out-String
           Write-Host $output
           if ($LASTEXITCODE -ne 0) { throw "caseclerk-tray.exe --smoke exited $LASTEXITCODE`n$output" }
-          if ($output -notmatch "^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
+          # (?m): match per-line, not just at the very start of the whole
+          # captured (stdout+stderr merged) string -- belt-and-braces
+          # alongside caseclerk-tray's own fix (--smoke sets logging to
+          # WARNING before any db work) for the exact failure this line once
+          # had: routine INFO db-migration noise on a fresh data dir preceded
+          # the status line, so a whole-string ^ anchor never matched it.
+          if ($output -notmatch "(?m)^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
           if ($output -match "Traceback") { throw "caseclerk-tray.exe --smoke crashed:`n$output" }
 
       - name: Upload Windows package artifact
@@ -180,7 +223,13 @@ jobs:
           $output = & $exePath --smoke 2>&1 | Out-String
           Write-Host $output
           if ($LASTEXITCODE -ne 0) { throw "installed caseclerk-tray.exe --smoke exited $LASTEXITCODE`n$output" }
-          if ($output -notmatch "^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
+          # (?m): match per-line, not just at the very start of the whole
+          # captured (stdout+stderr merged) string -- belt-and-braces
+          # alongside caseclerk-tray's own fix (--smoke sets logging to
+          # WARNING before any db work) for the exact failure this line once
+          # had: routine INFO db-migration noise on a fresh data dir preceded
+          # the status line, so a whole-string ^ anchor never matched it.
+          if ($output -notmatch "(?m)^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
 
       - name: Smoke test -- reinstalling over a running caseclerk.exe is handled cleanly
         run: |
