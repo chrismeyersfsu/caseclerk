@@ -1,10 +1,18 @@
-"""`caseclerk share start|stop|status`: the HTTP transport + a cloudflared named
-tunnel as two detached child processes, tracked by a pidfile in the data dir.
+"""`caseclerk share start|stop|status|setup`: the HTTP transport + a cloudflared
+named tunnel as two detached child processes, tracked by a pidfile in the data
+dir.
 
 Both processes are started the same way the auto-updater spawns things: detached,
 stdio silenced, PID recorded so a later `stop` (a separate process invocation) can
 find and terminate them. Neither child is a Python object we keep a handle to --
 `share start` and `share stop` are two different CLI invocations.
+
+The typer commands below are thin: each one's actual logic lives in a plain
+function (`start_sharing`, `stop_sharing`, `setup_credentials`, `is_running`)
+that takes/returns plain data and never calls `typer.echo` -- these are the
+library entry points the caseclerk-tray GUI calls directly, so there is
+exactly one implementation of "start sharing" / "run the non-interactive
+tunnel setup" shared by both surfaces, not two.
 """
 
 from __future__ import annotations
@@ -16,6 +24,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -145,6 +155,79 @@ def _terminate(pid: object) -> bool:
     return not _is_alive(pid)
 
 
+@dataclass(frozen=True)
+class SetupOutcome:
+    """Result of `setup_credentials` -- everything both `caseclerk share setup
+    --credentials` and the tray app's Settings > Remote sharing setup need to
+    report success/failure, without either one re-deriving it."""
+
+    ok: bool
+    message: str
+    hostname: str | None = None
+    tunnel_name: str | None = None
+    tunnel_id: str | None = None
+    public_url: str | None = None
+    binary_path: Path | None = None
+    credentials_path: Path | None = None
+    config_path: Path | None = None
+
+
+def setup_credentials(
+    credentials: Path,
+    *,
+    hostname: str,
+    tunnel_name: str | None = None,
+    progress: Callable[[str], None] | None = None,
+    binary: Path | None = None,
+) -> SetupOutcome:
+    """The entire non-interactive tunnel setup: resolve/download cloudflared
+    (unless a resolved `binary` is already supplied), install the tunnel
+    credentials, write cloudflared's config.yml, and persist
+    share.hostname/tunnelName. This is the ONE implementation of that flow --
+    `caseclerk share setup --credentials ... --hostname ...` and the tray
+    app's Settings window both call this, neither duplicates it.
+
+    Never raises: filesystem/format problems (missing file, unparseable
+    credentials JSON, empty hostname) come back as `SetupOutcome(ok=False, ...)`
+    so a GUI caller can show them inline instead of crashing.
+    """
+    if not hostname.strip():
+        return SetupOutcome(False, "Hostname is required.")
+
+    if binary is None:
+        try:
+            binary = cloudflared_module.resolve(progress=progress)
+        except cloudflared_module.CloudflaredError as exc:
+            return SetupOutcome(False, f"Could not obtain cloudflared: {exc}")
+
+    cfg = load_config()
+    effective_tunnel_name = tunnel_name or cfg.share.tunnel_name
+
+    try:
+        result = cloudflared_module.install_credentials(credentials, hostname=hostname, port=cfg.share.port)
+    except cloudflared_module.CloudflaredError as exc:
+        return SetupOutcome(False, f"Could not install the tunnel credentials: {exc}")
+
+    new_cfg = cfg.model_copy(
+        update={
+            "share": cfg.share.model_copy(update={"hostname": hostname, "tunnel_name": effective_tunnel_name})
+        }
+    )
+    save_config(new_cfg)
+
+    return SetupOutcome(
+        True,
+        f"Installed tunnel {result.tunnel_id} -> {hostname}",
+        hostname=hostname,
+        tunnel_name=effective_tunnel_name,
+        tunnel_id=result.tunnel_id,
+        public_url=f"https://{hostname}{MCP_PATH}",
+        binary_path=binary,
+        credentials_path=result.credentials_path,
+        config_path=result.config_path,
+    )
+
+
 @app.command("setup")
 def share_setup(
     credentials: str | None = typer.Option(
@@ -173,7 +256,9 @@ def share_setup(
     and updates share.hostname/tunnelName -- the whole on-site visit is
     `init`, this command, then `share shortcuts`; the Cloudflare-side steps
     (login, tunnel create, DNS route) happen ahead of time on the developer's
-    own machine."""
+    own machine. (The tray app's Settings window offers the same
+    --credentials/--hostname setup from a form, via `setup_credentials`
+    above.)"""
     if tunnel_name is not None and credentials is None:
         typer.echo("--tunnel-name requires --credentials.", err=True)
         raise typer.Exit(code=1)
@@ -197,26 +282,13 @@ def share_setup(
     if credentials is None or hostname is None:
         return
 
-    cfg = load_config()
-    effective_tunnel_name = tunnel_name or cfg.share.tunnel_name
+    outcome = setup_credentials(Path(credentials), hostname=hostname, tunnel_name=tunnel_name, binary=binary)
+    if not outcome.ok:
+        typer.echo(outcome.message, err=True)
+        raise typer.Exit(code=1)
 
-    try:
-        result = cloudflared_module.install_credentials(
-            Path(credentials), hostname=hostname, port=cfg.share.port
-        )
-    except cloudflared_module.CloudflaredError as exc:
-        typer.echo(f"Could not install the tunnel credentials: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    new_cfg = cfg.model_copy(
-        update={
-            "share": cfg.share.model_copy(update={"hostname": hostname, "tunnel_name": effective_tunnel_name})
-        }
-    )
-    save_config(new_cfg)
-
-    typer.echo(f"Installed tunnel {result.tunnel_id} -> {hostname}")
-    typer.echo(f"share.hostname set to {hostname!r}, share.tunnelName set to {effective_tunnel_name!r}")
+    typer.echo(outcome.message)
+    typer.echo(f"share.hostname set to {outcome.hostname!r}, share.tunnelName set to {outcome.tunnel_name!r}")
 
     # A verification pass rather than a live tunnel dry-run: actually
     # connecting would need real network access to Cloudflare's edge and a
@@ -225,18 +297,18 @@ def share_setup(
     # behind exactly the files `share start` will need.
     typer.echo("\nVerifying setup:")
     verified = True
-    if binary.is_file():
-        typer.echo(f"[ok]   cloudflared binary present: {binary}")
+    if outcome.binary_path is not None and outcome.binary_path.is_file():
+        typer.echo(f"[ok]   cloudflared binary present: {outcome.binary_path}")
     else:
         verified = False
         typer.echo("[FAIL] cloudflared binary missing")
-    if result.credentials_path.is_file():
-        typer.echo(f"[ok]   tunnel credentials installed: {result.credentials_path}")
+    if outcome.credentials_path is not None and outcome.credentials_path.is_file():
+        typer.echo(f"[ok]   tunnel credentials installed: {outcome.credentials_path}")
     else:
         verified = False
         typer.echo("[FAIL] tunnel credentials missing")
-    if result.config_path.is_file():
-        typer.echo(f"[ok]   cloudflared config written: {result.config_path}")
+    if outcome.config_path is not None and outcome.config_path.is_file():
+        typer.echo(f"[ok]   cloudflared config written: {outcome.config_path}")
     else:
         verified = False
         typer.echo("[FAIL] cloudflared config missing")
@@ -245,29 +317,34 @@ def share_setup(
         raise typer.Exit(code=1)
 
 
-@app.command("start")
-def share_start() -> None:
-    """Start the HTTP transport and the cloudflared tunnel, both detached."""
+@dataclass(frozen=True)
+class StartOutcome:
+    ok: bool
+    message: str
+    public_url: str | None = None
+
+
+def start_sharing(*, progress: Callable[[str], None] | None = None) -> StartOutcome:
+    """Start the HTTP transport and the cloudflared tunnel, both detached.
+    Library entry point shared by `caseclerk share start` and the tray app's
+    "Start Sharing" action -- no typer/echo side effects."""
     state = _read_state()
     if state and (_is_alive(state.get("server_pid")) or _is_alive(state.get("cloudflared_pid"))):
-        typer.echo("share is already running -- see `caseclerk share status`.", err=True)
-        raise typer.Exit(code=1)
+        return StartOutcome(False, "share is already running -- see `caseclerk share status`.")
 
     cfg = load_config()
     if not cfg.share.hostname:
-        typer.echo(
+        return StartOutcome(
+            False,
             "share.hostname is not configured. Complete the one-time cloudflared setup "
             "(see the README's Remote access section), then run "
             "`caseclerk config set share.hostname <your-hostname>`.",
-            err=True,
         )
-        raise typer.Exit(code=1)
 
     try:
-        cloudflared_bin = cloudflared_module.resolve(progress=lambda msg: typer.echo(msg))
+        cloudflared_bin = cloudflared_module.resolve(progress=progress)
     except cloudflared_module.CloudflaredError as exc:
-        typer.echo(f"Could not obtain cloudflared: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+        return StartOutcome(False, f"Could not obtain cloudflared: {exc}")
 
     caseclerk_bin = _caseclerk_binary()
     server_pid = _spawn([str(caseclerk_bin), "serve", "--transport", "http", "--port", str(cfg.share.port)])
@@ -304,31 +381,65 @@ def share_start() -> None:
     )
 
     public_url = f"https://{cfg.share.hostname}{MCP_PATH}"
-    typer.echo(f"Started. Public URL: {public_url}")
+    return StartOutcome(True, f"Started. Public URL: {public_url}", public_url=public_url)
+
+
+@app.command("start")
+def share_start() -> None:
+    """Start the HTTP transport and the cloudflared tunnel, both detached."""
+    outcome = start_sharing(progress=lambda msg: typer.echo(msg))
+    if not outcome.ok:
+        typer.echo(outcome.message, err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(outcome.message)
     typer.echo(
-        "In ChatGPT: Settings -> Apps & Connectors -> Advanced settings -> Developer mode, "
-        f"then create a connector pointed at {public_url} with OAuth authentication."
+        "In ChatGPT: Settings -> Security and login -> Developer mode (web, chatgpt.com only), "
+        f"then create a developer-mode app pointed at {outcome.public_url} with OAuth authentication."
     )
     typer.echo("Run `caseclerk share stop` when you're done.")
 
 
-@app.command("stop")
-def share_stop() -> None:
-    """Stop the HTTP transport and the tunnel, verifying both processes are dead."""
+@dataclass(frozen=True)
+class StopOutcome:
+    ok: bool
+    message: str
+
+
+def stop_sharing() -> StopOutcome:
+    """Stop the HTTP transport and the tunnel, verifying both processes are
+    dead. Library entry point shared by `caseclerk share stop` and the tray
+    app's "Stop Sharing" action -- no typer/echo side effects."""
     state = _read_state()
     if state is None:
-        typer.echo("share is not running.")
-        return
+        return StopOutcome(True, "share is not running.")
 
     server_dead = _terminate(state.get("server_pid"))
     cloudflared_dead = _terminate(state.get("cloudflared_pid"))
     _clear_state()
 
     if server_dead and cloudflared_dead:
-        typer.echo("Stopped.")
-    else:
-        typer.echo("Stopped, but one or more processes may not have exited cleanly.", err=True)
+        return StopOutcome(True, "Stopped.")
+    return StopOutcome(False, "Stopped, but one or more processes may not have exited cleanly.")
+
+
+@app.command("stop")
+def share_stop() -> None:
+    """Stop the HTTP transport and the tunnel, verifying both processes are dead."""
+    outcome = stop_sharing()
+    typer.echo(outcome.message, err=not outcome.ok)
+    if not outcome.ok:
         raise typer.Exit(code=1)
+
+
+def is_running() -> bool:
+    """Whether the HTTP transport and/or the cloudflared tunnel is currently
+    up -- the single source of truth `caseclerk share status` and the tray
+    app's menu/Status window both read."""
+    state = _read_state()
+    if not state:
+        return False
+    return _is_alive(state.get("server_pid")) or _is_alive(state.get("cloudflared_pid"))
 
 
 @app.command("status")

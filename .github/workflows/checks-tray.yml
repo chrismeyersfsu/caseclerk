@@ -1,0 +1,28 @@
+name: checks-tray
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/caseclerk-tray/**"
+      - "packages/caseclerk-core/**"
+      - "packages/caseclerk-cli/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-tray.yml"
+  pull_request:
+    paths:
+      - "packages/caseclerk-tray/**"
+      - "packages/caseclerk-core/**"
+      - "packages/caseclerk-cli/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/_checks.yml"
+      - ".github/workflows/checks-tray.yml"
+
+jobs:
+  checks:
+    uses: ./.github/workflows/_checks.yml
+    with:
+      package: caseclerk-tray
