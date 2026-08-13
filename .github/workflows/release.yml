@@ -182,6 +182,63 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "installed caseclerk-tray.exe --smoke exited $LASTEXITCODE`n$output" }
           if ($output -notmatch "^caseclerk-tray ") { throw "unexpected --smoke output:`n$output" }
 
+      - name: Smoke test -- reinstalling over a running caseclerk.exe is handled cleanly
+        run: |
+          # Regression coverage for a real failure report: installing over a
+          # running `caseclerk.exe serve` (sharing was on) silently kept the
+          # OLD binaries in place -- Setup "succeeded" but --version still
+          # reported the old build, because the running process still had
+          # the file open. This starts a real, long-running server process
+          # from the already-installed copy, reinstalls over it while it's
+          # running, and asserts the installer terminated that process
+          # (Restart Manager and/or the PrepareToInstall taskkill backstop --
+          # see scripts/installer.iss) rather than leaving it locking files.
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $setupPath = (Resolve-Path "dist-installer\CaseClerk-Setup-$version.exe").Path
+          $installDir = Join-Path $PWD "smoke-install"
+          $exePath = Join-Path $installDir "caseclerk.exe"
+
+          $env:CASECLERK_CONFIG_DIR = "$PWD\smoke-config-reinstall"
+          $env:CASECLERK_DATA_DIR = "$PWD\smoke-data-reinstall"
+
+          # 127.0.0.1-only (serve_http never binds anything else), so this
+          # never triggers a Windows Firewall "allow this app" prompt, which
+          # would otherwise hang an unattended run.
+          $serverProc = Start-Process -FilePath $exePath -ArgumentList @(
+            "serve", "--transport", "http", "--port", "18787"
+          ) -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          if ($serverProc.HasExited) {
+            throw "caseclerk.exe serve exited early (exit $($serverProc.ExitCode)); can't test the running-process case"
+          }
+          $serverPid = $serverProc.Id
+          Write-Host "Started caseclerk.exe serve (pid $serverPid) to reinstall over"
+
+          $proc = Start-Process -FilePath $setupPath -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`""
+          ) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+            Stop-Process -Id $serverPid -Force -ErrorAction SilentlyContinue
+            throw "reinstall over a running process failed with exit $($proc.ExitCode)"
+          }
+
+          Start-Sleep -Seconds 2
+          $stillRunning = Get-Process -Id $serverPid -ErrorAction SilentlyContinue
+          if ($stillRunning) {
+            Stop-Process -Id $serverPid -Force -ErrorAction SilentlyContinue
+            throw "caseclerk.exe serve (pid $serverPid) was still running after reinstall -- installer did not terminate it"
+          }
+          Write-Host "Confirmed: the running caseclerk.exe process was terminated by the installer"
+
+          # And the reinstall itself must have actually succeeded -- not
+          # silently left the old (locked) binary in place.
+          $reinstalledVersion = & $exePath --version
+          if ($LASTEXITCODE -ne 0) { throw "caseclerk.exe --version exited $LASTEXITCODE after reinstall" }
+          if ($reinstalledVersion -ne $version) {
+            throw "reinstalled version ($reinstalledVersion) does not match tag version ($version)"
+          }
+          Write-Host "Confirmed: reinstall succeeded ($reinstalledVersion)"
+
       - name: Smoke test -- silent uninstall
         run: |
           $installDir = Join-Path $PWD "smoke-install"
