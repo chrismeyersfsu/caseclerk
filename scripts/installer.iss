@@ -10,8 +10,43 @@
 ; the tray app once install completes; the "start automatically" [Tasks]
 ; entry (unchecked by default) writes the same HKCU Run key caseclerk-tray's
 ; own Settings > "Start CaseClerk when Windows starts" checkbox does --
-; uninstall always removes that value regardless of which one wrote it, and
-; best-effort taskkills a running caseclerk-tray.exe before removing files.
+; uninstall always removes that value regardless of which one wrote it.
+;
+; Both install (upgrading over a running copy) and uninstall best-effort
+; terminate caseclerk.exe/caseclerk-tray.exe before touching files: a real
+; failure report showed installing v0.4.1 over a running `caseclerk.exe
+; serve` (sharing was on) silently kept the old binaries in place --
+; Setup "succeeded" but --version still reported the old build, because the
+; running process still had the file open. CloseApplications below (Restart
+; Manager) is Windows' own, more precise mechanism for this -- it detects
+; processes holding a *specific file about to be replaced* open, not just
+; anything by that name, and (per Inno's docs) closes them silently in
+; /SILENT and /VERYSILENT modes rather than prompting, so unattended
+; installs behave the same as interactive ones. Restart Manager should
+; reliably catch our case: a running process always keeps its own EXE file
+; handle open for as long as it runs, regardless of whether it has a
+; window, a console, or was launched detached (this is fundamental to how
+; Windows loads a PE image, not a GUI-specific mechanism) -- but
+; PrepareToInstall below still does a direct, unconditional taskkill as a
+; backstop in case Restart Manager is ever unavailable (e.g. its service is
+; disabled by policy), mirroring exactly what uninstall already does.
+; RestartApplications is off: Restart Manager's own "restart what I closed"
+; would relaunch `caseclerk.exe serve` with its bare original command line,
+; completely bypassing share.py's pidfile bookkeeping (share.json would
+; still point at the now-dead old PID) -- silently leaving an
+; un-tracked server running is worse than leaving sharing off after an
+; upgrade for the user (or the tray, via its own menu) to restart deliberately.
+;
+; [InstallDelete] below wipes the whole _internal directory before every
+; install: another real failure report found an old, version-suffixed
+; caseclerk_cli-0.4.0.dist-info sitting right alongside the new
+; caseclerk_cli-0.4.1.dist-info after an upgrade -- Inno's [Files] overwrites
+; same-named files in place but never deletes ones a newer release simply
+; stopped shipping, so an upgrade only ever *adds/updates* files, never
+; *removes* stale ones. importlib.metadata found the old dist-info first, so
+; `caseclerk --version` kept reporting the old version forever (and the
+; updater thought an update was perpetually still pending). See the
+; [InstallDelete] entry's own comment for the full explanation.
 ;
 ; Build with (from the repo root, matching release.yml):
 ;   iscc /DMyAppVersion=X.Y.Z scripts\installer.iss
@@ -64,6 +99,13 @@ PrivilegesRequired=lowest
 ChangesEnvironment=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; See the header comment above: Restart Manager detects+closes whatever
+; holds our files open (works silently, unattended, in /SILENT and
+; /VERYSILENT); RestartApplications is off so Inno never relaunches
+; caseclerk.exe/caseclerk-tray.exe itself -- our own [Run]/[Tasks]/tray menu
+; own that decision instead.
+CloseApplications=yes
+RestartApplications=no
 SourceDir=..
 OutputDir=dist-installer
 OutputBaseFilename=CaseClerk-Setup-{#MyAppVersion}
@@ -71,6 +113,21 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
+
+[InstallDelete]
+; Wipe the whole _internal support directory before every install (fresh or
+; upgrade) rather than letting the [Files] copy below merge into whatever's
+; already there. A real user hit exactly this: after upgrading, importlib.metadata
+; found an OLD, version-suffixed caseclerk_cli-0.4.0.dist-info sitting right
+; alongside the new caseclerk_cli-0.4.1.dist-info -- Inno overwrites same-named
+; files in place but never deletes ones a newer release simply stopped shipping,
+; and PyInstaller's _internal is full of version-suffixed names -- so `--version`
+; kept reporting the old version forever, and the auto-updater thought an update
+; was perpetually still pending. Runs (per Inno's install sequence) after
+; PrepareToInstall below has already best-effort closed anything that might still
+; have these files open, and before [Files] extracts the fresh copy. A no-op on a
+; first-time install, where _internal doesn't exist yet.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 ; dist-windows\caseclerk already contains BOTH caseclerk.exe and
@@ -178,6 +235,32 @@ begin
     Log(Format('Failed to remove from PATH: [%s]', [Path]));
 end;
 
+// Best-effort, unconditional backstop alongside CloseApplications/Restart
+// Manager (see the header + [Setup] comments): /F force-kills, run hidden,
+// and a nonzero exit (e.g. the process simply isn't running, the overwhelmingly
+// common case) is not an error worth surfacing -- shared by both the
+// pre-install and uninstall call sites so there is exactly one place that
+// lists which processes matter.
+procedure KillRunningProcesses;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/IM {#MyAppExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/IM {#MyAppTrayExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+// Runs after Setup's own disk-space checks but strictly before any file is
+// extracted/copied -- the same "before files are touched" timing as
+// CurUninstallStepChanged's usUninstall below, just on the install side.
+// Returning '' means "proceed"; a non-empty string would abort Setup with
+// that message, which we never want here (a failed taskkill is not worth
+// blocking the install over).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  KillRunningProcesses;
+  Result := '';
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -194,20 +277,14 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
-  begin
-    // Best-effort: fires before Inno removes any files. A running tray icon
-    // holds no file locks that would actually block uninstall (this is a
-    // per-user install, nothing DLL-mapped exclusively), but leaving it
-    // running through an uninstall is a bad experience -- its Start Menu
-    // entry and install directory vanish while its icon lingers in the
-    // notification area. /F force-kills; a nonzero exit (e.g. it simply
-    // isn't running) is not an error worth surfacing here.
-    Exec('taskkill.exe', '/IM {#MyAppTrayExeName} /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end;
+    // Fires before Inno removes any files -- same KillRunningProcesses
+    // PrepareToInstall uses, so a running `caseclerk.exe serve` (which
+    // actually holds files open) and a running tray icon (which doesn't,
+    // but would otherwise linger after its Start Menu entry and install
+    // directory vanish) are both handled the same way on both paths.
+    KillRunningProcesses;
   if CurUninstallStep = usPostUninstall then
   begin
     EnvRemovePath(ExpandConstant('{app}'));
