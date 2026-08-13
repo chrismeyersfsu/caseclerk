@@ -75,8 +75,20 @@ def set_autostart(enabled: bool) -> bool:
 def check_for_update(conn: sqlite3.Connection, cfg: Config) -> str | None:
     """Newer version tag if one is available, respecting core's own
     cache/interval logic (at most one real network check per
-    updates.checkIntervalHours)."""
+    updates.checkIntervalHours) -- what the tray's background poll loop
+    calls on every tick; cheap, since it only actually hits the network
+    once per interval."""
     return core_update.check_for_update(conn, check_interval_hours=cfg.updates.check_interval_hours)
+
+
+def check_for_update_now(conn: sqlite3.Connection) -> str | None:
+    """Explicit, user-initiated check -- the tray menu's "Check for
+    Updates..." item and the Status window's button -- always asks GitHub
+    fresh rather than respecting updates.checkIntervalHours. Mirrors
+    `caseclerk update`'s own fix for the same problem: honoring the
+    configured interval here would silently repeat a stale "no update"
+    answer for up to a day after the user explicitly asked."""
+    return core_update.check_for_update(conn, check_interval_hours=0)
 
 
 def apply_staged_update(version_tag: str) -> binary_update.BinaryUpdateResult | None:

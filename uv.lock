@@ -243,7 +243,7 @@ requires-dist = [
 
 [[package]]
 name = "caseclerk-tray"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/caseclerk-tray" }
 dependencies = [
     { name = "caseclerk-cli" },

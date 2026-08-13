@@ -69,6 +69,35 @@ def test_check_for_update_delegates_with_configured_interval(
     assert available == "v9.9.9"
 
 
+def test_check_for_update_now_ignores_the_daily_check_cache(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (mirrors caseclerk_cli.main's `update` command fix): an
+    explicit, user-initiated check must not repeat a same-day cached
+    "no update" answer -- only the background poll (actions.check_for_update)
+    is allowed to respect updates.checkIntervalHours."""
+    from datetime import UTC, datetime
+
+    from caseclerk_core import db
+    from caseclerk_core import update as core_update
+
+    conn = db.connect()
+    try:
+        db.set_meta(conn, core_update.META_LAST_CHECK, datetime.now(UTC).isoformat())
+        db.set_meta(conn, core_update.META_AVAILABLE_VERSION, "")
+    finally:
+        conn.close()
+    monkeypatch.setattr(core_update, "fetch_latest_release_tag", lambda client=None: "v99.0.0")
+    monkeypatch.setattr(core_update, "current_version", lambda distribution=None: "1.0.0")
+
+    conn = db.connect()
+    try:
+        available = actions.check_for_update_now(conn)
+    finally:
+        conn.close()
+    assert available == "v99.0.0"
+
+
 def test_apply_staged_update_noop_when_not_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(binary_update, "is_frozen", lambda: False)
     assert actions.apply_staged_update("v1.0.0") is None

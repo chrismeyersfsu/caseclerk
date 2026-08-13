@@ -139,7 +139,7 @@ class _TrayApp:
             actions.set_autostart(not bool(self._current_state.autostart_enabled))
             self.refresh()
         elif action_id == state.ACTION_CHECK_UPDATES:
-            self._check_updates()
+            self._check_updates_now()
         elif action_id == state.ACTION_RESTART_TO_UPDATE:
             self._restart_to_update()
         elif action_id == state.ACTION_QUIT:
@@ -152,7 +152,7 @@ class _TrayApp:
             self.root,
             get_state=self.get_state,
             on_toggle_sharing=lambda: self._dispatch(state.ACTION_TOGGLE_SHARING),
-            on_check_updates=self._check_updates,
+            on_check_updates=self._check_updates_now,
         )
 
     def _open_settings(self) -> None:
@@ -171,20 +171,39 @@ class _TrayApp:
         self._shutdown()
 
     # --- update handling ---------------------------------------------------
+    #
+    # Two distinct checks, mirroring the CLI's own two call sites (see
+    # caseclerk_cli.main.update's "always ask fresh" fix): the background
+    # poll loop respects updates.checkIntervalHours (core's own cache logic
+    # makes this cheap to call on every tick -- it only actually hits the
+    # network once per interval), while an explicit, user-initiated check
+    # (the menu item, the Status window's button) always asks fresh --
+    # honoring the interval there would silently repeat a stale "no update"
+    # answer for up to a day after the user explicitly asked.
 
-    def _check_updates(self) -> None:
+    def _periodic_update_check(self) -> None:
         cfg = load_config()
         conn = db.connect()
         try:
             available = actions.check_for_update(conn, cfg)
         finally:
             conn.close()
+        self._apply_if_available(available)
 
+    def _check_updates_now(self) -> None:
+        conn = db.connect()
+        try:
+            available = actions.check_for_update_now(conn)
+        finally:
+            conn.close()
+        self._apply_if_available(available)
+        self.refresh()
+
+    def _apply_if_available(self, available: str | None) -> None:
         if available and binary_update.is_frozen():
             result = actions.apply_staged_update(available)
             if result is not None and not result.ok:
                 logger.warning("update to %s failed: %s", available, result.detail)
-        self.refresh()
 
     def _restart_to_update(self) -> None:
         actions.relaunch()
@@ -203,6 +222,7 @@ class _TrayApp:
     def _poll_loop(self) -> None:
         while not self._stop_event.wait(POLL_INTERVAL_SECONDS):
             try:
+                self._periodic_update_check()
                 self.refresh()
             except Exception:
                 logger.exception("tray poll loop failed; will retry on the next interval")
