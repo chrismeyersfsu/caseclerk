@@ -15,6 +15,7 @@ from pathlib import Path
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 
 from caseclerk_core import db, scan
@@ -163,6 +164,26 @@ def serve(config: Config | None = None) -> None:
     server.run(transport="stdio")
 
 
+def transport_security_settings(cfg: Config) -> TransportSecuritySettings:
+    """DNS-rebinding protection that also admits the public share hostname.
+
+    Left to its own devices the SDK auto-allows only localhost Host headers when
+    bound to 127.0.0.1, so requests arriving through the cloudflared tunnel
+    (Host: <share.hostname>) get 421 Misdirected Request AFTER passing OAuth --
+    which a connector UI surfaces as a generic connection failure.
+    """
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    allowed_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    if cfg.share.hostname:
+        allowed_hosts += [cfg.share.hostname, f"{cfg.share.hostname}:443"]
+        allowed_origins.append(f"https://{cfg.share.hostname}")
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
 def serve_http(config: Config | None = None, *, port: int | None = None) -> None:
     """Entry point for `caseclerk serve --transport http`: streamable HTTP, bound to
     127.0.0.1 ONLY -- there is no host parameter, deliberately; a cloudflared tunnel
@@ -170,4 +191,9 @@ def serve_http(config: Config | None = None, *, port: int | None = None) -> None
     cfg = config or load_config()
     effective_port = port if port is not None else cfg.share.port
     server = build_server(cfg, http_auth=True, http_port=effective_port)
-    server.run(transport="streamable-http", host="127.0.0.1", port=effective_port)
+    server.run(
+        transport="streamable-http",
+        host="127.0.0.1",
+        port=effective_port,
+        transport_security=transport_security_settings(cfg),
+    )

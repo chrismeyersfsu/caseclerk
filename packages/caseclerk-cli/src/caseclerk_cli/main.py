@@ -236,10 +236,12 @@ def retry(
 @app.command()
 def update() -> None:
     """Check GitHub Releases for a newer caseclerk-cli and, if found, apply it on the spot."""
-    cfg = load_config()
     conn = db.connect()
     try:
-        available = core_update.check_for_update(conn, check_interval_hours=cfg.updates.check_interval_hours)
+        # interval 0: an explicit `caseclerk update` always asks GitHub fresh -- the
+        # configured interval only paces the background auto-check, and honoring it
+        # here made this command repeat a stale "no update" for up to a day.
+        available = core_update.check_for_update(conn, check_interval_hours=0)
     finally:
         conn.close()
 

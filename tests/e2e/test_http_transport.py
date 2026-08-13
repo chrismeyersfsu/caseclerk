@@ -28,6 +28,7 @@ PORT = 8940
 STARTUP_TIMEOUT_SECONDS = 20
 PROCESS_TIMEOUT_SECONDS = 120
 REDIRECT_URI = "https://example-connector.test/callback"
+TUNNEL_HOSTNAME = "caseclerk-e2e.example.test"
 
 
 def _caseclerk_binary() -> Path:
@@ -67,6 +68,9 @@ def test_http_transport_oauth_dance_and_audit_log(tmp_path: Path) -> None:
         "CASECLERK_CONFIG_DIR": str(tmp_path / "config"),
         "CASECLERK_DATA_DIR": str(tmp_path / "data"),
         "CASECLERK_DOCUMENTS_ROOT": str(documents_root),
+        # A tunneled request carries the public hostname in Host, not 127.0.0.1 --
+        # the transport's DNS-rebinding protection must admit it (regression: 421).
+        "CASECLERK_SHARE_HOSTNAME": TUNNEL_HOSTNAME,
     }
     caseclerk_bin = _caseclerk_binary()
 
@@ -172,6 +176,23 @@ def test_http_transport_oauth_dance_and_audit_log(tmp_path: Path) -> None:
                 headers=call_headers,
             )
             assert tool_resp.status_code == 200, tool_resp.text
+
+            # Tunneled requests carry the public hostname; must pass host validation
+            # (the regression ChatGPT hit: 421 after a fully successful OAuth dance).
+            tunneled = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 3, "method": "ping"},
+                headers={**call_headers, "Host": TUNNEL_HOSTNAME},
+            )
+            assert tunneled.status_code != 421, tunneled.text
+
+            # ...while an unrelated Host is still rejected: rebinding protection stays on.
+            foreign = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 4, "method": "ping"},
+                headers={**call_headers, "Host": "evil.example.com"},
+            )
+            assert foreign.status_code == 421, foreign.text
     finally:
         server_process.terminate()
         try:

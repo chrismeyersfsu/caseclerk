@@ -10,7 +10,7 @@ from caseclerk_core.config import Config
 from caseclerk_core.models import DocumentState
 from caseclerk_mcp.deps import Deps
 from caseclerk_mcp.prompts import resolve_prompts_dir
-from caseclerk_mcp.server import _startup_scan_and_queue, build_server
+from caseclerk_mcp.server import _startup_scan_and_queue, build_server, transport_security_settings
 
 EXPECTED_TOOL_NAMES = {
     "list_clients",
@@ -97,3 +97,22 @@ def test_build_server_reads_documents_root_from_config_when_not_overridden(tmp_p
 
     tools = asyncio.run(server.list_tools())
     assert {t.name for t in tools} == EXPECTED_TOOL_NAMES
+
+
+def test_transport_security_is_localhost_only_without_a_share_hostname() -> None:
+    settings = transport_security_settings(Config())
+
+    assert settings.enable_dns_rebinding_protection is True
+    assert settings.allowed_hosts == ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+
+
+def test_transport_security_admits_the_share_hostname_alongside_localhost() -> None:
+    cfg = Config.model_validate({"share": {"hostname": "files.example.com"}})
+
+    settings = transport_security_settings(cfg)
+
+    assert settings.enable_dns_rebinding_protection is True
+    assert "files.example.com" in settings.allowed_hosts
+    assert "files.example.com:443" in settings.allowed_hosts
+    assert "127.0.0.1:*" in settings.allowed_hosts
+    assert "https://files.example.com" in settings.allowed_origins
