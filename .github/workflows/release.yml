@@ -98,6 +98,87 @@ jobs:
           path: dist-windows/caseclerk-windows-x64.zip
           if-no-files-found: error
 
+      - name: Compile installer (Inno Setup)
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $isccCmd = Get-Command iscc -ErrorAction SilentlyContinue
+          if ($isccCmd) {
+            $iscc = $isccCmd.Source
+          } else {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found (tried PATH and $iscc)" }
+          Write-Host "Using ISCC: $iscc"
+
+          & $iscc "/DMyAppVersion=$version" scripts\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC compile failed with exit $LASTEXITCODE" }
+
+          $setupPath = "dist-installer\CaseClerk-Setup-$version.exe"
+          if (-not (Test-Path $setupPath)) { throw "expected installer not found at $setupPath" }
+          Write-Host "Built $setupPath"
+
+      - name: Smoke test -- silent install
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $setupPath = (Resolve-Path "dist-installer\CaseClerk-Setup-$version.exe").Path
+          $installDir = Join-Path $PWD "smoke-install"
+
+          $proc = Start-Process -FilePath $setupPath -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$installDir`""
+          ) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "silent install failed with exit $($proc.ExitCode)" }
+
+          $exePath = Join-Path $installDir "caseclerk.exe"
+          if (-not (Test-Path $exePath)) { throw "caseclerk.exe not found at $exePath after silent install" }
+
+          $installedVersion = & $exePath --version
+          Write-Host "installed version: $installedVersion"
+          if ($LASTEXITCODE -ne 0) { throw "installed caseclerk.exe --version exited $LASTEXITCODE" }
+          if ($installedVersion -ne $version) {
+            throw "installed version ($installedVersion) does not match tag version ($version)"
+          }
+
+          $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+          if ($userPath -notlike "*$installDir*") {
+            throw "install dir was not added to the user PATH registry value"
+          }
+          Write-Host "PATH updated correctly: $installDir is present"
+
+      - name: Smoke test -- silent uninstall
+        run: |
+          $installDir = Join-Path $PWD "smoke-install"
+          $uninstaller = Join-Path $installDir "unins000.exe"
+          if (-not (Test-Path $uninstaller)) {
+            Write-Host "::warning::uninstaller not found at $uninstaller, skipping uninstall smoke test"
+            exit 0
+          }
+
+          $proc = Start-Process -FilePath $uninstaller -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          ) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "silent uninstall failed with exit $($proc.ExitCode)" }
+
+          # Inno Setup's uninstaller finishes removing files via a brief
+          # detached helper process (it can't delete itself while running);
+          # give that a moment before checking.
+          Start-Sleep -Seconds 3
+
+          $exePath = Join-Path $installDir "caseclerk.exe"
+          if (Test-Path $exePath) { throw "caseclerk.exe still present after silent uninstall" }
+
+          $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+          if ($userPath -like "*$installDir*") {
+            throw "install dir still present in the user PATH registry value after uninstall"
+          }
+          Write-Host "Silent uninstall verified: files removed, PATH cleaned up"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: caseclerk-windows-installer
+          path: dist-installer/CaseClerk-Setup-*.exe
+          if-no-files-found: error
+
   publish:
     needs:
       - verify-core
@@ -143,7 +224,16 @@ jobs:
           name: caseclerk-windows-x64
           path: windows-package
 
+      - name: Download the Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: caseclerk-windows-installer
+          path: windows-installer
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* e2e-report.zip windows-package/*.zip --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/* e2e-report.zip windows-package/*.zip windows-installer/*.exe \
+            --generate-notes
