@@ -93,6 +93,51 @@ def test_swap_in_replaces_a_stale_old_leftover(tmp_path: Path) -> None:
     assert (target / binary_update.EXE_NAME).read_text() == "new exe bytes"
 
 
+def test_swap_in_replaces_a_support_directory_wholesale_not_merged(tmp_path: Path) -> None:
+    """Regression guard, prompted by a real failure report against the
+    installer's analogous bug (see scripts/installer.iss's [InstallDelete]):
+    a naive per-file merge copy would leave a stale, version-suffixed
+    directory from the previous release sitting alongside the new one
+    inside a support directory like PyInstaller's _internal -- exactly what
+    would make importlib.metadata find an OLD .dist-info first and report
+    the wrong version forever. _swap_in operates at the TOP-LEVEL entry
+    granularity: a directory like _internal is renamed aside and moved back
+    in as one atomic unit (just like a plain file), never merged file-by-file,
+    so nothing the new release doesn't ship can survive inside it."""
+    target = tmp_path / "install"
+    target.mkdir()
+    (target / binary_update.EXE_NAME).write_text("old exe bytes")
+    old_support = target / "_internal"
+    old_support.mkdir()
+    (old_support / "caseclerk_cli-0.4.0.dist-info").mkdir()
+    (old_support / "caseclerk_cli-0.4.0.dist-info" / "METADATA").write_text("old metadata")
+    (old_support / "shared.dll").write_text("old shared dll")
+
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / binary_update.EXE_NAME).write_text("new exe bytes")
+    new_support = staged / "_internal"
+    new_support.mkdir()
+    (new_support / "caseclerk_cli-0.4.1.dist-info").mkdir()
+    (new_support / "caseclerk_cli-0.4.1.dist-info" / "METADATA").write_text("new metadata")
+    (new_support / "shared.dll").write_text("new shared dll")
+
+    binary_update._swap_in(staged, target)
+
+    # the live _internal is exactly what the new release shipped -- no
+    # stale entry from the old one survives inside it
+    live_dist_info = target / "_internal" / "caseclerk_cli-0.4.1.dist-info" / "METADATA"
+    assert live_dist_info.read_text() == "new metadata"
+    assert not (target / "_internal" / "caseclerk_cli-0.4.0.dist-info").exists()
+    assert (target / "_internal" / "shared.dll").read_text() == "new shared dll"
+
+    # the old _internal (including the stale dist-info) is preserved intact
+    # under .old, not deleted outright or merged -- cleanup_stale_files
+    # removes the whole thing later, once nothing has it open
+    old_dist_info = target / "_internal.old" / "caseclerk_cli-0.4.0.dist-info" / "METADATA"
+    assert old_dist_info.read_text() == "old metadata"
+
+
 def test_cleanup_stale_files_removes_old_suffixed_entries(tmp_path: Path) -> None:
     target = _make_install_dir(tmp_path)
     (target / f"{binary_update.EXE_NAME}.old").write_text("leftover")

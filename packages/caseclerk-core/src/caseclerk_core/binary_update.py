@@ -123,7 +123,18 @@ def _remove(path: Path) -> None:
 def _swap_in(staged_dir: Path, target_dir: Path) -> None:
     """Rename every current entry in target_dir aside, then move every staged
     entry into its place. Entries already carrying the .old suffix (a prior
-    swap's leftovers not yet cleaned up) are left alone."""
+    swap's leftovers not yet cleaned up) are left alone.
+
+    Deliberately operates on target_dir's TOP-LEVEL entries only -- a
+    directory like PyInstaller's `_internal` is renamed aside and moved back
+    in as one atomic unit, the same as a plain file, never merged file-by-file
+    with the staged one. A per-file merge would leave anything the new
+    release doesn't ship (e.g. a stale, version-suffixed .dist-info
+    directory from the old build) sitting there unnoticed, which is exactly
+    the installer-side bug scripts/installer.iss's [InstallDelete] entry
+    exists to prevent for the Inno-driven install path -- see
+    test_swap_in_replaces_a_support_directory_wholesale_not_merged.
+    """
     for entry in target_dir.iterdir():
         if entry.name.endswith(_OLD_SUFFIX):
             continue
