@@ -21,6 +21,15 @@ doesn't always see through; COLLECT_ALL and COPY_METADATA below are
 deliberately generous rather than hand-trimmed, since a missing one manifests
 as a runtime ImportError/entry-point failure on the target machine, not a
 build-time error here.
+
+scripts/installer.iss (the Inno Setup script that wraps this into
+CaseClerk-Setup.exe) depends on this script's default output layout --
+``<dist-dir>/caseclerk/`` at the repo-root-relative path ``dist-windows`` --
+via its ``SourceDir=..`` + ``Source: "dist-windows\\caseclerk\\*"`` [Files]
+entry. Compiling the installer is a separate step (``iscc scripts/installer.iss
+/DMyAppVersion=X.Y.Z``, see release.yml's package-windows job), not something
+this script does itself: ISCC only exists on Windows, and this script is
+meant to run (for spec-mechanics verification) on any OS.
 """
 
 from __future__ import annotations
