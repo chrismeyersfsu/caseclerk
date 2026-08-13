@@ -150,6 +150,15 @@ def test_queue_reclaims_stale_claims_before_processing(tmp_path: Path, conn: sql
     assert doc.state == DocumentState.INDEXED
 
 
+def test_default_stale_minutes_is_short_enough_for_interactive_use() -> None:
+    """Regression: a job stuck behind a claim from a crashed worker (e.g. the
+    BrokenProcessPool bug on frozen Windows) used to take up to 30 minutes to
+    become reprocessable -- too long for someone watching `caseclerk
+    process`/the tray after a crash. A ceiling, not an exact value, so a
+    reasonable future retune doesn't need to touch this test."""
+    assert queue.DEFAULT_STALE_MINUTES <= 15
+
+
 def test_queue_pooled_execution_processes_multiple_documents(
     tmp_path: Path, conn: sqlite3.Connection
 ) -> None:
