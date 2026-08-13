@@ -9,10 +9,14 @@
 ; Build with (from the repo root, matching release.yml):
 ;   iscc /DMyAppVersion=X.Y.Z scripts\installer.iss
 ; MyAppVersion defaults to a placeholder for standalone/dev compiles.
-; SourceDir=".." below makes every relative [Files] Source: path resolve
-; against the repo root, regardless of the compiler's own working
-; directory -- so this always picks up scripts/build_windows.py's default
-; output layout (dist-windows\caseclerk\).
+; SourceDir=".." below (relative to this script's own directory, scripts\,
+; so it resolves to the repo root regardless of the compiler's own working
+; directory) makes every relative [Files] Source: path resolve against the
+; repo root -- so this always picks up scripts/build_windows.py's default
+; output layout (dist-windows\caseclerk\). OutputDir, once SourceDir is set,
+; is ALSO resolved relative to SourceDir (not to this script's directory --
+; confirmed the hard way, via a real windows-latest CI run misplacing the
+; installer one level up), hence no "..\" prefix on it below.
 
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0-dev"
@@ -53,7 +57,7 @@ ChangesEnvironment=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SourceDir=..
-OutputDir=..\dist-installer
+OutputDir=dist-installer
 OutputBaseFilename=CaseClerk-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
