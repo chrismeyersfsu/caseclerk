@@ -18,6 +18,10 @@ on:
       - ".github/workflows/e2e.yml"
   # lets release.yml reuse this exact job instead of duplicating it
   workflow_call: {}
+  # TEMPORARY: lets us fire repeated manual runs to confirm the windows-latest
+  # sqlite3.OperationalError flake (db.py's connect() retry) is actually
+  # fixed, via `gh workflow run e2e.yml` in a loop. Remove once confirmed.
+  workflow_dispatch: {}
 
 jobs:
   e2e:
